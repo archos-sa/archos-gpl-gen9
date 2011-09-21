@@ -1,0 +1,73 @@
+#############################################################
+#
+# domx
+#
+#############################################################
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU Library General Public License as
+# published by the Free Software Foundation; either version 2 of the
+# License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+# Library General Public License for more details.
+#
+# You should have received a copy of the GNU Library General Public
+# License along with this program; if not, write to the Free Software
+# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307
+# USA
+
+DOMX_SOURCE:=$(TOPDIR)/../lgf/mydroid/hardware/ti/omx/
+DOMX_DIR:=$(BUILD_DIR)/domx
+DOMX_LIBS = domx mmosal OMX_Core OMX.TI.DUCATI1.IMAGE.JPEGD OMX.TI.DUCATI1.MISC.SAMPLE OMX.TI.DUCATI1.VIDEO.CAMERA
+DOMX_LIBS += OMX.TI.DUCATI1.VIDEO.DECODER OMX.TI.DUCATI1.VIDEO.H264D OMX.TI.DUCATI1.VIDEO.H264E OMX.TI.DUCATI1.VIDEO.MPEG4D
+DOMX_LIBS += OMX.TI.DUCATI1.VIDEO.MPEG4E OMX.TI.DUCATI1.VIDEO.VP6D OMX.TI.DUCATI1.VIDEO.VP7D
+DOMX_INSTALLED_LIBS :=  domx mmosal OMX_Core OMX.TI.DUCATI1.VIDEO.CAMERA
+
+$(DOMX_DIR)/.unpacked:
+	mkdir $(DOMX_DIR) || true
+	(cd $(DOMX_SOURCE) ; git archive HEAD ) |tar x -C $(DOMX_DIR)
+	touch $(DOMX_DIR)/.unpacked
+
+$(DOMX_DIR)/.configured: $(DOMX_DIR)/.unpacked
+	(cd $(DOMX_DIR)/ducati/domx/; rm -rf config.cache; bash bootstrap.sh; \
+		$(TARGET_CONFIGURE_OPTS) \
+		$(TARGET_CONFIGURE_ARGS) \
+		./configure \
+		--target=$(GNU_TARGET_NAME) \
+		--host=$(GNU_TARGET_NAME) \
+		--build=$(GNU_HOST_NAME) \
+		--prefix=$(STAGING_DIR)/usr \
+	)
+	touch $@
+
+$(DOMX_DIR)/.compiled: $(DOMX_DIR)/.configured
+	make -C $(DOMX_DIR)/ducati/domx/
+	touch $@
+
+
+$(STAGING_DIR)/usr/lib/libmmosal.so: $(DOMX_DIR)/.compiled
+	$(MAKE) -C $(DOMX_DIR)/ducati/domx/ install
+
+$(TARGET_DIR)/usr/lib/libmmosal.so: $(STAGING_DIR)/usr/lib/libmmosal.so
+	$(foreach LIB,$(DOMX_INSTALLED_LIBS), \
+		cp -dpf $(STAGING_DIR)/usr/lib/lib$(LIB).so* $(TARGET_DIR)/usr/lib/; \
+		$(STRIPCMD) $(STRIP_STRIP_UNNEEDED) $(TARGET_DIR)/usr/lib/lib$(LIB).so ;)
+
+domx: uclibc tiler syslink syslink_d2c $(TARGET_DIR)/usr/lib/libmmosal.so
+
+domx-clean:
+
+domx-dirclean:
+	rm -rf $(DOMX_DIR)
+
+#############################################################
+#
+# Toplevel Makefile options
+#
+#############################################################
+ifeq ($(strip $(BR2_PACKAGE_DOMX)),y)
+TARGETS+=domx
+endif

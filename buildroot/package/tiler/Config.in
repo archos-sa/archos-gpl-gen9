@@ -1,0 +1,5 @@
+config BR2_PACKAGE_TILER
+	bool "tiler"
+	default n
+	help
+		Build libtimemmgr used in some TI stuff

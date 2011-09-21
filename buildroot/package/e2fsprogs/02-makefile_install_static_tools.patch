@@ -1,0 +1,57 @@
+diff -ruN e2fsprogs-1.41.14-orig/e2fsck/Makefile.in e2fsprogs-1.41.14/e2fsck/Makefile.in
+--- e2fsprogs-1.41.14-orig/e2fsck/Makefile.in	2010-12-22 16:49:20.000000000 +0100
++++ e2fsprogs-1.41.14/e2fsck/Makefile.in	2011-06-30 16:24:25.707251926 +0200
+@@ -11,7 +11,7 @@
+ 
+ @MCONFIG@
+ 
+-PROGS=		e2fsck
++PROGS=		e2fsck e2fsck.static
+ MANPAGES=	e2fsck.8
+ FMANPAGES=	e2fsck.conf.5
+ XTRA_CFLAGS=	-DRESOURCE_TRACK -I.
+@@ -120,6 +120,7 @@
+ e2fsck.static: $(OBJS) $(STATIC_DEPLIBS)
+ 	$(E) "	LD $@"
+ 	$(Q) $(LD) $(LDFLAGS_STATIC) -o e2fsck.static $(OBJS) $(STATIC_LIBS) 
++	$(STRIP) $@
+ 
+ e2fsck.profiled: $(PROFILED_OBJS)  $(PROFILED_DEPLIBS)
+ 	$(E) "	LD $@"
+diff -ruN e2fsprogs-1.41.14-orig/misc/Makefile.in e2fsprogs-1.41.14/misc/Makefile.in
+--- e2fsprogs-1.41.14-orig/misc/Makefile.in	2010-12-22 16:49:20.000000000 +0100
++++ e2fsprogs-1.41.14/misc/Makefile.in	2011-06-30 16:20:31.407252063 +0200
+@@ -24,7 +24,8 @@
+ @BLKID_CMT@FINDFS_MAN= findfs.8
+ 
+ SPROGS=		mke2fs badblocks tune2fs dumpe2fs $(BLKID_PROG) logsave \
+-			$(E2IMAGE_PROG) @FSCK_PROG@ e2undo
++			$(E2IMAGE_PROG) @FSCK_PROG@ e2undo \
++			mke2fs.static tune2fs.static
+ USPROGS=	mklost+found filefrag e2freefrag $(UUIDD_PROG)
+ SMANPAGES=	tune2fs.8 mklost+found.8 mke2fs.8 dumpe2fs.8 badblocks.8 \
+ 			e2label.8 $(FINDFS_MAN) $(BLKID_MAN) $(E2IMAGE_MAN) \
+@@ -148,6 +149,7 @@
+ 	$(Q) $(CC) $(LDFLAGS_STATIC) -o tune2fs.static $(TUNE2FS_OBJS) \
+ 		$(STATIC_LIBS) $(STATIC_LIBBLKID) $(STATIC_LIBUUID) \
+ 		$(STATIC_LIBE2P) $(LIBINTL)
++	$(STRIP) $@
+ 
+ tune2fs.profiled: $(PROFILED_TUNE2FS_OBJS) $(PROFILED_DEPLIBS) \
+ 		$(PROFILED_E2P) $(DEPPROFILED_LIBBLKID) $(DEPPROFILED_LIBUUID)
+@@ -166,6 +168,7 @@
+ 	$(E) "	LD $@"
+ 	$(Q) $(CC) $(ALL_LDFLAGS) -o blkid.static $(BLKID_OBJS) $(STATIC_LIBS) \
+ 		$(STATIC_LIBBLKID) $(LIBINTL)
++	$(STRIP) $@
+ 
+ blkid.profiled: $(PROFILED_BLKID_OBJS) $(DEPPROFILED_LIBBLKID) \
+ 		$(PROFILED_LIBEXT2FS)
+@@ -215,6 +218,7 @@
+ 	$(Q) $(CC) $(ALL_LDFLAGS) -static -o mke2fs.static $(MKE2FS_OBJS) \
+ 		$(STATIC_LIBS) $(STATIC_LIBE2P) $(STATIC_LIBBLKID) \
+ 		$(STATIC_LIBUUID) $(LIBINTL)
++	$(STRIP) $@
+ 
+ mke2fs.profiled: $(PROFILED_MKE2FS_OBJS) $(PROFILED_DEPLIBS) \
+ 	$(PROFILED_LIBE2P) $(PROFILED_DEPLIBBLKID) $(PROFILED_DEPLIBUUID) 

@@ -1,0 +1,7 @@
+config BR2_PACKAGE_WPA_SUPPLICANT_TIWLAN
+        bool "wpa_supplicant 0.5.x"
+        default n
+        help
+        The wpa_supplicant 0.5.x is a wireless lan authentication/association daemon. 
+        Beware you must have avx/wpa_supplicant checked out for this target to 
+        actually work.

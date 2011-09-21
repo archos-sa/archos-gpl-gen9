@@ -1,0 +1,21 @@
+diff -urN -X /home/marc/dontdiff samba-3.3.3.orig/source/registry/reg_perfcount.c samba-3.3.3/source/registry/reg_perfcount.c
+--- samba-3.3.3.orig/source/registry/reg_perfcount.c	2009-04-01 13:48:54.000000000 +0200
++++ samba-3.3.3/source/registry/reg_perfcount.c	2009-04-03 14:50:07.000000000 +0200
+@@ -616,14 +616,14 @@
+ 	obj = NULL;
+ 	memset(buf, 0, PERFCOUNT_MAX_LEN);
+ 	memcpy(buf, data.dptr, data.dsize);
+-	begin = index(buf, '[');
+-	end = index(buf, ']');
++	begin = strchr(buf, '[');
++	end = strchr(buf, ']');
+ 	if(begin == NULL || end == NULL)
+ 		return False;
+ 	start = begin+1;
+ 
+ 	while(start < end) {
+-		stop = index(start, ',');
++		stop = strchr(start, ',');
+ 		if(stop == NULL)
+ 			stop = end;
+ 		*stop = '\0';

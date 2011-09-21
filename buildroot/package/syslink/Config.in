@@ -1,0 +1,5 @@
+config BR2_PACKAGE_SYSLINK
+	bool "syslink"
+	default n
+	help
+		Build syslink libs and daemon

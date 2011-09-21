@@ -1,0 +1,7 @@
+config BR2_PACKAGE_FLAC
+	bool "libFLAC "
+	default n
+	help
+
+	    http://flac.sourceforge.net/
+

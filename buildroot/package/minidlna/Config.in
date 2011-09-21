@@ -1,0 +1,7 @@
+config BR2_PACKAGE_MINIDLNA
+	bool "minidlna, a dlna server"
+	default n
+	help
+
+	    http://sourceforge.net/projects/minidlna/
+

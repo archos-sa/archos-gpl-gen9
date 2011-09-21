@@ -1,0 +1,7 @@
+config BR2_PACKAGE_LIBEXIF
+	bool "libexif"
+	default n
+	help
+
+	    http://libexif.sourceforge.net/
+

@@ -1,0 +1,2 @@
+Beware that this is the samba version that is GPLv3 and thus MUST NOT BE USED in production firmware: this is for testing purposes only.
+Version >3.2.xx is needed to avoid segfault on OMAP3 for smbd (reenabling server)

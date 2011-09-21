@@ -1,0 +1,5 @@
+config BR2_PACKAGE_DOMX
+	bool "domx"
+	default n
+	help
+		Build Ducati remote OpenMAX component

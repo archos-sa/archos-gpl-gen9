@@ -1,0 +1,10 @@
+config BR2_PACKAGE_USB_MODESWITCH
+	bool "usb_modeswitch"
+	default n
+	help
+	  USB_ModeSwitch is (surprise!) a small mode switching tool for controlling
+	  a"flip flop" (multiple mode) USB gear.
+
+	  http://www.draisberghof.de/usb_modeswitch
+
+

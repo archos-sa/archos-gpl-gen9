@@ -1,0 +1,58 @@
+--- busybox-1.7.2/libbb/speed_table.c	2010-11-08 14:31:39.000000000 +0100
++++ busybox-1.7.2_patched/libbb/speed_table.c	2010-11-08 14:37:05.000000000 +0100
+@@ -31,9 +31,9 @@
+ 	{B4800, 4800},
+ 	{B9600, 9600},
+ #ifdef	B19200
+-	{B19200, 19200},
++	{B19200, 19200/256 + 0x8000U},
+ #elif defined(EXTA)
+-	{EXTA, 19200},
++	{EXTA, 19200/256 + 0x8000U},
+ #endif
+ #ifdef	B38400
+ 	{B38400, 38400/256 + 0x8000U},
+@@ -52,6 +52,33 @@
+ #ifdef B460800
+ 	{B460800, 460800/256 + 0x8000U},
+ #endif
++#ifdef B921600
++	{B921600, 921600/256 + 0x8000U},
++#endif
++#ifdef B1000000
++	{B1000000, 1000000/10000 + 0x4000U},
++#endif
++#ifdef B1152000
++	{B1152000, 1152000/256 + 0x8000U},
++#endif
++#ifdef B1500000
++	{B1500000, 1500000/10000 + 0x4000U},
++#endif
++#ifdef B2000000
++	{B2000000, 2000000/10000 + 0x4000U},
++#endif
++#ifdef B2500000
++	{B2500000, 2500000/10000 + 0x4000U},
++#endif
++#ifdef B3000000
++	{B3000000, 3000000/10000 + 0x4000U},
++#endif
++#ifdef B3500000
++	{B3500000, 3500000/10000 + 0x4000U},
++#endif
++#ifdef B4000000
++	{B4000000, 4000000/10000 + 0x4000U},
++#endif
+ };
+ 
+ enum { NUM_SPEEDS = ARRAY_SIZE(speeds) };
+@@ -65,6 +92,9 @@
+ 			if (speeds[i].value & 0x8000U) {
+ 				return ((unsigned long) (speeds[i].value) & 0x7fffU) * 256;
+ 			}
++			else if (speeds[i].value & 0x4000U) {
++				return ((unsigned long) (speeds[i].value) & 0x3fffU) * 10000;
++			}
+ 			return speeds[i].value;
+ 		}
+ 	} while (++i < NUM_SPEEDS);

@@ -1,0 +1,211 @@
+diff -urN -X /home/marc/dontdiff samba-3.3.3.orig/source/configure samba-3.3.3/source/configure
+--- samba-3.3.3.orig/source/configure	2009-04-01 14:19:36.000000000 +0200
++++ samba-3.3.3/source/configure	2009-04-03 16:23:18.000000000 +0200
+@@ -587,7 +587,7 @@
+ ac_clean_files=
+ ac_config_libobj_dir=.
+ LIBOBJS=
+-cross_compiling=no
++cross_compiling=yes
+ subdirs=
+ MFLAGS=
+ MAKEFLAGS=
+@@ -2269,7 +2269,7 @@
+ $SHELL "$ac_aux_dir/config.sub" sun4 >/dev/null 2>&1 ||
+   { { $as_echo "$as_me:$LINENO: error: cannot run $SHELL $ac_aux_dir/config.sub" >&5
+ $as_echo "$as_me: error: cannot run $SHELL $ac_aux_dir/config.sub" >&2;}
+-   { (exit 1); exit 1; }; }
++   }
+ 
+ { $as_echo "$as_me:$LINENO: checking build system type" >&5
+ $as_echo_n "checking build system type... " >&6; }
+@@ -3108,7 +3108,7 @@
+ See \`config.log' for more details." >&5
+ $as_echo "$as_me: error: no acceptable C compiler found in \$PATH
+ See \`config.log' for more details." >&2;}
+-   { (exit 1); exit 1; }; }; }
++   }; }
+ 
+ # Provide some information about the compiler.
+ $as_echo "$as_me:$LINENO: checking for C compiler version" >&5
+@@ -3280,7 +3280,7 @@
+ $as_echo "$as_me: error: cannot run C compiled programs.
+ If you meant to cross compile, use \`--host'.
+ See \`config.log' for more details." >&2;}
+-   { (exit 1); exit 1; }; }; }
++   }; }
+     fi
+   fi
+ fi
+@@ -13072,7 +13072,7 @@
+ See \`config.log' for more details." >&5
+ $as_echo "$as_me: error: cannot run test program while cross compiling
+ See \`config.log' for more details." >&2;}
+-   { (exit 1); exit 1; }; }; }
++   }; }
+ else
+   cat >conftest.$ac_ext <<_ACEOF
+ /* confdefs.h.  */
+@@ -23807,7 +23807,7 @@
+ See \`config.log' for more details." >&5
+ $as_echo "$as_me: error: cannot run test program while cross compiling
+ See \`config.log' for more details." >&2;}
+-   { (exit 1); exit 1; }; }; }
++   }; }
+ else
+   cat >conftest.$ac_ext <<_ACEOF
+ /* confdefs.h.  */
+@@ -23995,7 +23995,7 @@
+ See \`config.log' for more details." >&5
+ $as_echo "$as_me: error: cannot run test program while cross compiling
+ See \`config.log' for more details." >&2;}
+-   { (exit 1); exit 1; }; }; }
++   }; }
+ else
+   cat >conftest.$ac_ext <<_ACEOF
+ /* confdefs.h.  */
+@@ -27429,7 +27429,7 @@
+ 	 $as_test_x conftest$ac_exeext
+        }; then
+   ac_cv_lib_ext_ipv6_if_nametoindex=yes;
+-		  ac_cv_lib_ext_ipv6=yes
++		  ac_cv_lib_ext_ipv6=no
+ else
+   $as_echo "$as_me: failed program was:" >&5
+ sed 's/^/| /' conftest.$ac_ext >&5
+@@ -27456,7 +27456,6 @@
+ 
+ if test $ac_cv_lib_ext_ipv6 = yes; then
+   cat >>confdefs.h <<_ACEOF
+-#define HAVE_LIBIPV6 1
+ _ACEOF
+ 
+ 		case "$LIBREPLACE_NETWORK_LIBS" in
+@@ -28898,7 +28897,7 @@
+ 	 $as_test_x conftest$ac_exeext
+        }; then
+ 
+-		libreplace_cv_HAVE_IPV6=yes
++		libreplace_cv_HAVE_IPV6=no
+ 
+ else
+   $as_echo "$as_me: failed program was:" >&5
+@@ -28919,7 +28918,6 @@
+ if test x"$libreplace_cv_HAVE_IPV6" = x"yes"; then
+ 
+ cat >>confdefs.h <<\_ACEOF
+-#define HAVE_IPV6 1
+ _ACEOF
+ 
+ fi
+@@ -44066,83 +44064,6 @@
+ #
+ case "$host_os" in
+     *linux*)
+-       # glibc <= 2.3.2 has a broken getgrouplist
+-       if test "$cross_compiling" = yes; then
+-  { { $as_echo "$as_me:$LINENO: error: in \`$ac_pwd':" >&5
+-$as_echo "$as_me: error: in \`$ac_pwd':" >&2;}
+-{ { $as_echo "$as_me:$LINENO: error: cannot run test program while cross compiling
+-See \`config.log' for more details." >&5
+-$as_echo "$as_me: error: cannot run test program while cross compiling
+-See \`config.log' for more details." >&2;}
+-   { (exit 1); exit 1; }; }; }
+-else
+-  cat >conftest.$ac_ext <<_ACEOF
+-/* confdefs.h.  */
+-_ACEOF
+-cat confdefs.h >>conftest.$ac_ext
+-cat >>conftest.$ac_ext <<_ACEOF
+-/* end confdefs.h.  */
+-
+-#include <unistd.h>
+-#include <sys/utsname.h>
+-main() {
+-       /* glibc up to 2.3 has a broken getgrouplist */
+-#if defined(__GLIBC__) && defined(__GLIBC_MINOR__)
+-       int libc_major = __GLIBC__;
+-       int libc_minor = __GLIBC_MINOR__;
+-
+-       if (libc_major < 2)
+-              exit(1);
+-       if ((libc_major == 2) && (libc_minor <= 3))
+-              exit(1);
+-#endif
+-       exit(0);
+-}
+-
+-_ACEOF
+-rm -f conftest$ac_exeext
+-if { (ac_try="$ac_link"
+-case "(($ac_try" in
+-  *\"* | *\`* | *\\*) ac_try_echo=\$ac_try;;
+-  *) ac_try_echo=$ac_try;;
+-esac
+-eval ac_try_echo="\"\$as_me:$LINENO: $ac_try_echo\""
+-$as_echo "$ac_try_echo") >&5
+-  (eval "$ac_link") 2>&5
+-  ac_status=$?
+-  $as_echo "$as_me:$LINENO: \$? = $ac_status" >&5
+-  (exit $ac_status); } && { ac_try='./conftest$ac_exeext'
+-  { (case "(($ac_try" in
+-  *\"* | *\`* | *\\*) ac_try_echo=\$ac_try;;
+-  *) ac_try_echo=$ac_try;;
+-esac
+-eval ac_try_echo="\"\$as_me:$LINENO: $ac_try_echo\""
+-$as_echo "$ac_try_echo") >&5
+-  (eval "$ac_try") 2>&5
+-  ac_status=$?
+-  $as_echo "$as_me:$LINENO: \$? = $ac_status" >&5
+-  (exit $ac_status); }; }; then
+-  linux_getgrouplist_ok=yes
+-else
+-  $as_echo "$as_me: program exited with status $ac_status" >&5
+-$as_echo "$as_me: failed program was:" >&5
+-sed 's/^/| /' conftest.$ac_ext >&5
+-
+-( exit $ac_status )
+-linux_getgrouplist_ok=no
+-fi
+-rm -rf conftest.dSYM
+-rm -f core *.core core.conftest.* gmon.out bb.out conftest$ac_exeext conftest.$ac_objext conftest.$ac_ext
+-fi
+-
+-
+-       if test x"$linux_getgrouplist_ok" = x"yes"; then
+-
+-cat >>confdefs.h <<\_ACEOF
+-#define HAVE_GETGROUPLIST 1
+-_ACEOF
+-
+-       fi
+        ;;
+     *)
+ 
+@@ -67124,7 +67045,7 @@
+ See \`config.log' for more details." >&5
+ $as_echo "$as_me: error: cannot run test program while cross compiling
+ See \`config.log' for more details." >&2;}
+-   { (exit 1); exit 1; }; }; }
++   }; }
+ else
+   cat >conftest.$ac_ext <<_ACEOF
+ /* confdefs.h.  */
+@@ -67399,7 +67320,7 @@
+ See \`config.log' for more details." >&5
+ $as_echo "$as_me: error: cannot run test program while cross compiling
+ See \`config.log' for more details." >&2;}
+-   { (exit 1); exit 1; }; }; }
++   }; }
+ else
+   cat >conftest.$ac_ext <<_ACEOF
+ /* confdefs.h.  */
+@@ -67500,7 +67421,7 @@
+ See \`config.log' for more details." >&5
+ $as_echo "$as_me: error: cannot run test program while cross compiling
+ See \`config.log' for more details." >&2;}
+-   { (exit 1); exit 1; }; }; }
++   }; }
+ else
+   cat >conftest.$ac_ext <<_ACEOF
+ /* confdefs.h.  */

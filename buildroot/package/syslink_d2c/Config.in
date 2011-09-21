@@ -1,0 +1,5 @@
+config BR2_PACKAGE_SYSLINK_D2C
+	bool "syslink_d2c"
+	default n
+	help
+		Build syslink/d2c builds
