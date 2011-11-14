@@ -1,0 +1,5 @@
+config BR2_PACKAGE_AUDIOCOMPRESS
+        bool "audiocompress"
+        default n
+        help
+        Audio compressor library
