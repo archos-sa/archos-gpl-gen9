@@ -143,6 +143,8 @@ cc-option=$(shell if $(TARGET_CC) $(TARGET_CFLAGS) $(1) -S -o /dev/null -xc /dev
 #############################################################
 unexport CROSS_COMPILE
 unexport ARCH
+# fix build on x86_64 opensuse
+unexport CONFIG_SITE
 
 #############################################################
 #

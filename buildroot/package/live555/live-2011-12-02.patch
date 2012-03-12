@@ -1,0 +1,59 @@
+diff -Naur live_original/testProgs/testMPEG2TransportStreamer.cpp live_patched/testProgs/testMPEG2TransportStreamer.cpp
+--- live_original/testProgs/testMPEG2TransportStreamer.cpp	2011-12-02 22:55:50.000000000 +0100
++++ live_patched/testProgs/testMPEG2TransportStreamer.cpp	2011-12-09 11:27:34.000000000 +0100
+@@ -31,7 +31,7 @@
+ #endif
+ 
+ // To set up an internal RTSP server, uncomment the following:
+-//#define IMPLEMENT_RTSP_SERVER 1
++#define IMPLEMENT_RTSP_SERVER 1
+ // (Note that this RTSP server works for multicast only)
+ 
+ #define TRANSPORT_PACKET_SIZE 188
+@@ -39,7 +39,7 @@
+ // The product of these two numbers must be enough to fit within a network packet
+ 
+ UsageEnvironment* env;
+-char const* inputFileName = "test.ts";
++char const* inputFileName = "/data/media/camera.ts";
+ FramedSource* videoSource;
+ RTPSink* videoSink;
+ 
+@@ -61,7 +61,7 @@
+   // of the (single) destination.  (You may also need to make a similar
+   // change to the receiver program.)
+ #endif
+-  const unsigned short rtpPortNum = 1234;
++  const unsigned short rtpPortNum = 5000;
+   const unsigned short rtcpPortNum = rtpPortNum+1;
+   const unsigned char ttl = 7; // low, in case routers don't admin scope
+ 
+@@ -97,7 +97,7 @@
+   // Note: This starts RTCP running automatically
+ 
+ #ifdef IMPLEMENT_RTSP_SERVER
+-  RTSPServer* rtspServer = RTSPServer::createNew(*env);
++  RTSPServer* rtspServer = RTSPServer::createNew(*env, 2345);
+   // Note that this (attempts to) start a server on the default RTSP server
+   // port: 554.  To use a different port number, add it as an extra
+   // (optional) parameter to the "RTSPServer::createNew()" call above.
+@@ -106,8 +106,8 @@
+     exit(1);
+   }
+   ServerMediaSession* sms
+-    = ServerMediaSession::createNew(*env, "testStream", inputFileName,
+-		   "Session streamed by \"testMPEG2TransportStreamer\"",
++    = ServerMediaSession::createNew(*env, "camera", inputFileName,
++		   "Session streamed by \"Archos Remote\"",
+ 					   isSSM);
+   sms->addSubsession(PassiveServerMediaSubsession::createNew(*videoSink, rtcp));
+   rtspServer->addServerMediaSession(sms);
+@@ -133,7 +133,7 @@
+   Medium::close(videoSource);
+   // Note that this also closes the input file that this source read from.
+ 
+-  play();
++  //play();
+ }
+ 
+ void play() {

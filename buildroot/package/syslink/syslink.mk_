@@ -20,11 +20,14 @@
 # USA
 
 SYSLINK_SOURCE:=$(TOPDIR)/../lgf/mydroid/hardware/ti/syslink/
-SYSLINK_DIR:=$(BUILD_DIR)/syslink
+SYSLINK_VERSION=$(shell (cd $(SYSLINK_SOURCE); git rev-parse HEAD))
+
+SYSLINK_DIR:=$(BUILD_DIR)/syslink-$(SYSLINK_VERSION)
+
 SYSLINK_LIBS := ipc ipcutils omap4430proc procmgr rcm syslinknotify sysmgr
 
 $(SYSLINK_DIR)/.unpacked:
-	mkdir $(SYSLINK_DIR) || true
+	mkdir $(SYSLINK_DIR) || true
 	(cd $(SYSLINK_SOURCE) ; git archive HEAD ) |tar x -C $(SYSLINK_DIR)
 	touch $(SYSLINK_DIR)/.unpacked
 

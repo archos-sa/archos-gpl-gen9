@@ -1,0 +1,85 @@
+diff -uwbr lsdvd-0.16/lsdvd.c lsdvd-0.16_patched/lsdvd.c
+--- lsdvd-0.16/lsdvd.c	2006-03-02 14:48:11.000000000 +0100
++++ lsdvd-0.16_patched/lsdvd.c	2012-03-05 17:55:03.161444068 +0100
+@@ -107,7 +107,7 @@
+ {
+ 	double fps = frames_per_s[(dt->frame_u & 0xc0) >> 6];
+ 
+-	pt->usec = pt->usec + ((dt->frame_u & 0x30) >> 3) * 5 + (dt->frame_u & 0x0f) * 1000.0 / fps;
++	pt->usec = pt->usec + (((dt->frame_u & 0x30) >> 3) * 5 + (dt->frame_u & 0x0f)) * 1000.0 / fps;
+ 	pt->second = pt->second + ((dt->second & 0xf0) >> 3) * 5 + (dt->second & 0x0f);
+ 	pt->minute = pt->minute + ((dt->minute & 0xf0) >> 3) * 5 + (dt->minute & 0x0f);
+ 	pt->hour = pt->hour + ((dt->hour &   0xf0) >> 3) * 5 + (dt->hour   & 0x0f);
+@@ -442,6 +442,10 @@
+ 			{
+ 				dvd_info.titles[j].cells[i].length = dvdtime2msec(&pgc->cell_playback[i].playback_time)/1000.0;
+                                 converttime(&dvd_info.titles[j].cells[i].playback_time, &pgc->cell_playback[i].playback_time);
++				dvd_info.titles[j].cells[i].first_sector            = pgc->cell_playback[i].first_sector;
++				dvd_info.titles[j].cells[i].first_ilvu_end_sector   = pgc->cell_playback[i].first_ilvu_end_sector;
++				dvd_info.titles[j].cells[i].last_sector             = pgc->cell_playback[i].last_sector;
++				dvd_info.titles[j].cells[i].last_vobu_start_sector  = pgc->cell_playback[i].last_vobu_start_sector;
+ 			}
+ 		} else {
+ 			dvd_info.titles[j].cells = NULL;
+diff -uwbr lsdvd-0.16/lsdvd.h lsdvd-0.16_patched/lsdvd.h
+--- lsdvd-0.16/lsdvd.h	2005-12-12 19:04:53.000000000 +0100
++++ lsdvd-0.16_patched/lsdvd.h	2012-03-01 20:06:01.585191896 +0100
+@@ -2,6 +2,8 @@
+ #ifndef _LSDVD_H_
+ #define _LSDVD_H_
+ 
++#include <stdint.h>
++
+ extern int opt_a, opt_c, opt_n, opt_p, opt_q;
+ extern int opt_s, opt_t, opt_v, opt_x, opt_d;
+ 
+@@ -61,6 +63,10 @@
+ 		struct {
+ 			float length;
+ 			playback_time_t playback_time;
++			uint32_t first_sector;
++			uint32_t first_ilvu_end_sector;
++			uint32_t last_sector;
++			uint32_t last_vobu_start_sector;
+ 		} *cells;
+ 		int subtitle_count;
+ 		struct {
+diff -uwbr lsdvd-0.16/ohuman.c lsdvd-0.16_patched/ohuman.c
+--- lsdvd-0.16/ohuman.c	2005-12-12 19:04:53.000000000 +0100
++++ lsdvd-0.16_patched/ohuman.c	2012-03-05 13:35:22.789192872 +0100
+@@ -4,6 +4,9 @@
+ void ohuman_print(struct dvd_info *dvd_info) {
+ 
+ 	printf("Disc Title: %s\n", dvd_info->discinfo.disc_title);
++	if (! opt_t) {
++		printf("Longest track: %02d\n\n", dvd_info->longest_track);
++	}
+ 
+ 	int i, j;
+ 	for (j=0; j < dvd_info->title_count; j++) 
+@@ -91,11 +94,14 @@
+ //						(int)(dvd_info->titles[j].cells[i].length / 60 ) % 60,
+ //						(int)(dvd_info->titles[j].cells[i].length) % 60,
+ //						(int)(dvd_info->titles[j].cells[i].length*1000) % 1000);
+-				printf("\tCell: %02d, Length: %02d:%02d:%02d.%03d\n", i+1, 
++				printf("\tCell: %02d, Length: %02d:%02d:%02d.%03d, Pos: %08d/%08d\n", i+1, 
+ 						dvd_info->titles[j].cells[i].playback_time.hour,
+ 						dvd_info->titles[j].cells[i].playback_time.minute,
+ 						dvd_info->titles[j].cells[i].playback_time.second,
+-						dvd_info->titles[j].cells[i].playback_time.usec);
++						dvd_info->titles[j].cells[i].playback_time.usec,
++						dvd_info->titles[j].cells[i].first_sector,
++						dvd_info->titles[j].cells[i].last_sector
++						);
+ 			}
+ 		}
+ 
+@@ -114,8 +120,4 @@
+ 		printf("\n");
+ 	}
+ 	}
+-
+-	if (! opt_t) {
+-		printf("Longest track: %02d\n\n", dvd_info->longest_track);
+-	}
+ }

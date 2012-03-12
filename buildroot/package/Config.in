@@ -295,6 +295,7 @@ menuconfig BR2_AUDIO_SUPPORT
 if BR2_AUDIO_SUPPORT
 source "package/alsa-lib/Config.in"
 source "package/alsa-utils/Config.in"
+source "package/tinyalsa/Config.in"
 source "package/asterisk/Config.in"
 source "package/aumix/Config.in"
 source "package/libid3tag/Config.in"
@@ -333,8 +334,8 @@ source "package/libungif/Config.in"
 source "package/libgif/Config.in"
 source "package/sdl/Config.in"
 source "package/tiff/Config.in"
-source "package/ffmpeg/Config.in"
-source "package/ffmpeg_tiny/Config.in"
+source "package/libav/Config.in"
+source "package/libav_arm/Config.in"
 source "package/libmms/Config.in"
 source "package/libf2m/Config.in"
 source "package/opencore-amr/Config.in"
@@ -470,8 +471,11 @@ source "package/libwmf/Config.in"
 source "package/libgphoto2/Config.in
 source "package/gphotofs/Config.in
 
-source "package/tiler/Config.in"
-source "package/syslink/Config.in"
-source "package/syslink_d2c/Config.in"
-source "package/domx/Config.in"
+#source "package/tiler/Config.in"
+#source "package/syslink/Config.in"
+#source "package/syslink_d2c/Config.in"
+#source "package/domx/Config.in"
+
+source "package/libdvdread/Config.in"
+source "package/lsdvd/Config.in"
 endmenu

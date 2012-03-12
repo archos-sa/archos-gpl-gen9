@@ -20,10 +20,12 @@
 # USA
 
 SYSLINK_D2C_SOURCE:=$(TOPDIR)/../lgf/mydroid/hardware/ti/syslink/
-SYSLINK_D2C_DIR:=$(BUILD_DIR)/syslink_d2c
+SYSLINK_D2C_VERSION=$(shell (cd $(SYSLINK_D2C_SOURCE); git rev-parse HEAD))
+
+SYSLINK_D2C_DIR:=$(BUILD_DIR)/syslink_d2c-$(SYSLINK_D2C_VERSION)
 
 $(SYSLINK_D2C_DIR)/.unpacked:
-	mkdir $(SYSLINK_D2C_DIR) || true
+	mkdir $(SYSLINK_D2C_DIR)
 	(cd $(SYSLINK_D2C_SOURCE)/ ; git archive HEAD ) |tar x -C $(SYSLINK_D2C_DIR)
 	touch $(SYSLINK_D2C_DIR)/.unpacked
 

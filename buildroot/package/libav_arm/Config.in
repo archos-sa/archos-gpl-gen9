@@ -1,0 +1,6 @@
+config BR2_PACKAGE_LIBAV_ARM
+	bool "libav_arm"
+	default n
+	help
+	 libav for ARM
+

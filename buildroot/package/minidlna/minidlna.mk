@@ -8,7 +8,11 @@ MINIDLNA_SITE:=http://$(BR2_SOURCEFORGE_MIRROR).dl.sourceforge.net/sourceforge/m
 MINIDLNA_SOURCE:=minidlna_$(MINIDLNA_VERSION)_src.tar.gz
 MINIDLNA_DIR=$(BUILD_DIR)/minidlna-$(MINIDLNA_VERSION)
 MINIDLNA_INSTALL_STAGING = YES
-MINIDLNA_DEPENDENCIES = sqlite libid3tag jpeg flac libogg libvorbis libexif
+ifeq ($(ARCH),arm)
+MINIDLNA_DEPENDENCIES = sqlite libid3tag jpeg flac libogg libvorbis libexif libav_arm
+else
+MINIDLNA_DEPENDENCIES = sqlite libid3tag jpeg flac libogg libvorbis libexif libav
+endif
 MINIDLNA_CAT=$(ZCAT)
 
 

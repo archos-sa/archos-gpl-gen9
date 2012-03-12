@@ -1,0 +1,7 @@
+config BR2_PACKAGE_TINYALSA
+	bool "tinyalsa"
+	default n
+	help
+	  A small library to interface with ALSA in the Linux kernel
+
+	  https://github.com/tinyalsa/tinyalsa

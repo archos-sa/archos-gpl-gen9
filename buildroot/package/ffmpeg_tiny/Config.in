@@ -1,6 +1,0 @@
-config BR2_PACKAGE_FFMPEG_TINY
-	bool "ffmpeg_tiny"
-	default n
-	help
-
-	http://ffmpeg.sourceforge.net/index.php

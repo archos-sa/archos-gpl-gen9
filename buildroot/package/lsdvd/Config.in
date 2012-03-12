@@ -1,0 +1,7 @@
+config BR2_PACKAGE_LSDVD
+	bool "lsdvd"
+	depends on BR2_PACKAGE_LIBDVDREAD
+	default n
+	help
+	 lsdvd
+

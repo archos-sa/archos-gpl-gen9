@@ -20,7 +20,9 @@
 # USA
 
 TILER_SOURCE:=$(TOPDIR)/../lgf/mydroid/hardware/ti/tiler/
-TILER_DIR:=$(BUILD_DIR)/tiler
+TILER_VERSION=$(shell (cd $(TILER_SOURCE); git rev-parse HEAD))
+
+TILER_DIR:=$(BUILD_DIR)/tiler-$(TILER_VERSION)
 
 $(TILER_DIR)/.unpacked:
 	mkdir $(TILER_DIR) || true

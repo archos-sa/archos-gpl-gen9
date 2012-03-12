@@ -1,0 +1,7 @@
+config BR2_PACKAGE_LIBAV
+	bool "libav"
+	depends on BR2_PACKAGE_ZLIB 
+	default n
+	help
+	 libav
+

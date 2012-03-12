@@ -1,0 +1,149 @@
+--- /home/noury/tmp/samba-3.0.34/source/smbd/reply.c	2009-01-19 11:40:09.000000000 +0100
++++ samba-3.0.34/source/smbd/reply.c	2012-02-20 14:03:20.064714406 +0100
+@@ -47,6 +47,71 @@
+ /* Custom version for processing POSIX paths. */
+ #define IS_PATH_SEP(c,posix_only) ((c) == '/' || (!(posix_only) && (c) == '\\'))
+ 
++
++static const char *command[] = {
++	"/system/bin/app_process",
++	"/sytem/bin",
++	"com.android.commands.am.Am",
++	"broadcast",
++	"-D",
++	"-a",
++	"android.intent.action.MEDIA_SCANNER_SCAN_FILE",
++};
++
++int update_path(const char *path, int parent)
++{
++	pid_t pid;
++	int status;
++	char buf[PATH_MAX] = "file:///mnt/storage/";
++	int buf_len = strlen(buf);
++	int path_len = strlen(path);
++
++
++	DEBUG(2, ("path: %s\n", path));
++	strncat(buf, path, path_len);
++
++	// directories can have an optional / at the end. strip it
++	if(buf[buf_len + path_len - 1] == '/') {
++		buf[buf_len + path_len - 1] = '\0';
++		path_len--;
++	}
++
++	if(parent) {
++		// strip the last path component. we are only interested
++		// in the parent hosting a modification.
++		char *cursor = buf + buf_len + path_len - 1;
++		while(*cursor != '/') {
++			cursor--;
++			buf_len--;
++		}
++		*(cursor + 1) = '\0';
++	}
++	DEBUG(2, ("path: %s\n", buf));
++
++	pid = fork();
++
++	switch(pid) {
++		case -1:
++			DEBUG(0, ("unable to fork\n"));
++			break;
++		case 0:
++			setresgid(getegid(), -1, -1); //avoid being setgid and LD_LIBRARY_PATH being dropped by linker for safety reasons
++			DEBUG(2, ("exec %s\n", command[0]));
++			if(execlp(command[0], command[0], command[1], command[2], command[3], command[4], command[5], command[6], buf, NULL) == -1) {
++				DEBUG(0, ("unable to exec %d (%s)\n", errno, strerror(errno)));
++				exit(42);
++			}
++			break;
++		default:
++			DEBUG(2, ("waiting\n"));
++			waitpid(pid, &status, 0);
++			if(WIFEXITED(status) && WEXITSTATUS(status) == 42) {
++				exit(42);
++			}
++			break;
++	}
++}
++
+ NTSTATUS check_path_syntax_internal(pstring destname,
+ 				    const pstring srcname,
+ 				    BOOL posix_path,
+@@ -907,6 +972,8 @@
+ 		return UNIXERROR(ERRDOS, ERRnoaccess);
+ 	}
+  
++	update_path(fname, 0);
++
+ 	outsize = set_message(outbuf,0,0,False);
+   
+ 	DEBUG( 3, ( "setatr name=%s mode=%d\n", fname, mode ) );
+@@ -1638,6 +1705,8 @@
+ 				oplock_request,
+ 				NULL, &fsp);
+   
++	update_path(fname, 1);
++
+ 	if (!NT_STATUS_IS_OK(status)) {
+ 		END_PROFILE(SMBcreate);
+ 		if (open_was_deferred(SVAL(inbuf,smb_mid))) {
+@@ -2123,8 +2192,11 @@
+ 	
+ 	DEBUG(3,("reply_unlink : %s\n",name));
+ 	
++	char *fname = strdup(name);
+ 	status = unlink_internals(conn, dirtype, name, path_contains_wcard,
+ 				  True);
++	update_path(fname, 0);
++	free(fname);
+ 	if (!NT_STATUS_IS_OK(status)) {
+ 		END_PROFILE(SMBunlink);
+ 		if (open_was_deferred(SVAL(inbuf,smb_mid))) {
+@@ -3351,7 +3423,10 @@
+ 		 * a disk full error. If not then it was probably an I/O error.
+ 		 */
+  
++		char *fname = strdup(fsp->fsp_name);
+ 		status = close_file(fsp,NORMAL_CLOSE);
++		update_path(fname, 1);
++		free(fname);
+ 	}  
+ 
+ 	if(!NT_STATUS_IS_OK(status)) {
+@@ -3832,6 +3907,8 @@
+ 		return ERROR_NT(status);
+ 	}
+ 
++	update_path(directory, 1);
++
+ 	outsize = set_message(outbuf,0,0,False);
+ 
+ 	DEBUG( 3, ( "mkdir %s ret=%d\n", directory, outsize ) );
+@@ -4054,6 +4131,9 @@
+ 
+ 	dptr_closepath(directory,SVAL(inbuf,smb_pid));
+ 	status = rmdir_internals(conn, directory);
++
++	update_path(directory, 1);
++
+ 	if (!NT_STATUS_IS_OK(status)) {
+ 		END_PROFILE(SMBrmdir);
+ 		return ERROR_NT(status);
+@@ -4844,7 +4924,14 @@
+ 	
+ 	DEBUG(3,("reply_mv : %s -> %s\n",name,newname));
+ 	
++	char *fname_old = strdup(name);
++	char *fname_new = strdup(newname);
+ 	status = rename_internals(conn, name, newname, attrs, False, src_has_wcard, dest_has_wcard);
++	update_path(fname_new, 1);
++	update_path(fname_old, 0);
++	free(fname_new);
++	free(fname_old);
++
+ 	if (!NT_STATUS_IS_OK(status)) {
+ 		END_PROFILE(SMBmv);
+ 		if (open_was_deferred(SVAL(inbuf,smb_mid))) {
