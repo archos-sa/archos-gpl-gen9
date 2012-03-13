@@ -1409,9 +1409,7 @@ static const struct parse_data ssid_fields[] = {
 	{ INT_RANGE(peerkey, 0, 1) },
 	{ INT_RANGE(mixed_cell, 0, 1) },
 	{ INT_RANGE(frequency, 0, 10000) },
-	{ INT_RANGE(disable_pm, 0, 1) },
-	{ INT(wpa_ptk_rekey) },
-	{ INT_RANGE(disable_network_shares, 0, 1) } 
+	{ INT(wpa_ptk_rekey) }
 };
 
 #ifdef WPA_UNICODE_SSID

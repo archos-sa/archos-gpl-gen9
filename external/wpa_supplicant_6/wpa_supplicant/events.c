@@ -622,84 +622,12 @@ wpa_supplicant_select_bss(struct wpa_supplicant *wpa_s, struct wpa_ssid *group,
 	return wpa_supplicant_select_bss_non_wpa(wpa_s, group, selected_ssid);
 }
 
-static int wpa_supplicant_adhoc(struct wpa_supplicant *wpa_s)
-{
-	struct wpa_ssid *ssid;
-	int use_crypt, i;
-
-	for (ssid = wpa_s->conf->ssid; ssid; ssid = ssid->next) {
-		if (ssid->mode && !ssid->disabled)
-			break;
-	}
-
-	if (ssid == NULL)
-		return -1;
-
-	wpa_printf(MSG_ERROR, "Selected adhoc network '%s'",
-		   wpa_ssid_txt(ssid->ssid, ssid->ssid_len));
-	wpa_s->current_ssid = ssid;
-
-	if (wpa_drv_set_mode(wpa_s, 1)) {
-		wpa_printf(MSG_INFO, "Failed to configure driver to use adhoc "
-			   "mode");
-		return -1;
-	}
-
-	if (ssid->beacon_int &&
-	    wpa_drv_set_beacon_int(wpa_s, ssid->beacon_int)) {
-		wpa_printf(MSG_DEBUG, "Failed to configure beacon interval "
-			   "for IBSS network.");
-	}
-
-	/* FIX: set phymode and freq correctly */
-	if (ssid->channel &&
-	    wpa_drv_set_channel(wpa_s, WPA_MODE_IEEE80211G, ssid->channel, 0))
-	{
-		wpa_printf(MSG_DEBUG, "Failed to configure channel for IBSS "
-			   "network.");
-	}
-
-	wpa_s->key_mgmt = WPA_KEY_MGMT_NONE;
-	wpa_clear_keys(wpa_s, NULL);
-	wpa_s->pairwise_cipher = wpa_s->group_cipher = WPA_CIPHER_NONE;
-	use_crypt = 0;
-	for (i = 0; i < NUM_WEP_KEYS; i++) {
-		if (ssid->wep_key_len[i]) {
-			use_crypt = 1;
-			wpa_eapol_set_wep_key(wpa_s, i == ssid->wep_tx_keyidx,
-					      i, ssid->wep_key[i],
-					      ssid->wep_key_len[i]);
-			wpa_s->pairwise_cipher = wpa_s->group_cipher =
-				(ssid->wep_key_len[i] > 5) ?
-				WPA_CIPHER_WEP104 : WPA_CIPHER_WEP40;
-		}
-	}
-	wpa_drv_set_drop_unencrypted(wpa_s, use_crypt);
-
-	if (wpa_drv_set_bssid(wpa_s, (u8 *) "\x00\x00\x00\x00\x00\x00")) {
-		wpa_printf(MSG_ERROR, "Failed to clear BSSID for IBSS "
-			   "network.");
-	}
-
-	if (wpa_drv_set_ssid(wpa_s, ssid->ssid, ssid->ssid_len)) {
-		wpa_printf(MSG_ERROR, "Failed to configure SSID for IBSS "
-			   "network.");
-		return -1;
-	}
-
-	return 0;
-}
 
 static void wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s)
 {
 	int prio, timeout;
 	struct wpa_scan_res *selected = NULL;
 	struct wpa_ssid *ssid = NULL;
-
-	if (wpa_s->adhoc) {
-		wpa_printf(MSG_DEBUG, "Ignoring scan results in adhoc mode");
-		return;
-	}
 
 	wpa_supplicant_notify_scanning(wpa_s, 0);
 	if (wpa_supplicant_get_scan_results(wpa_s) < 0) {
@@ -782,10 +710,6 @@ static void wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s)
 				   "selected AP.");
 		}
 		rsn_preauth_scan_results(wpa_s->wpa, wpa_s->scan_res);
-	} else if (wpa_supplicant_adhoc(wpa_s) == 0) {
-		wpa_printf(MSG_DEBUG, "Adhoc network configured - trying to "
-			   "use it");
-		wpa_s->adhoc = 1;
 	} else {
 		wpa_printf(MSG_DEBUG, "No suitable AP found.");
 #ifdef ANDROID

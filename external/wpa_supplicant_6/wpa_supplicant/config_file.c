@@ -24,8 +24,6 @@
 #include "uuid.h"
 #include "eap_peer/eap_methods.h"
 
-#include <sys/stat.h>
-
 
 /**
  * wpa_config_get_line - Read the next configuration file line
@@ -522,11 +520,6 @@ struct wpa_config * wpa_config_read(const char *name)
 		return NULL;
 	}
 
-	/* When creating the config file, give group read/write access
-	 * to allow backup and restoring the file.
-	 */
-	chmod(name, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH|S_IWOTH);
-
 	while (wpa_config_get_line(buf, sizeof(buf), f, &line, &pos)) {
 		if (os_strcmp(pos, "network={") == 0) {
 			ssid = wpa_config_read_network(f, &line, id++);
@@ -810,8 +803,6 @@ static void wpa_config_write_network(FILE *f, struct wpa_ssid *ssid)
 	INT(ieee80211w);
 #endif /* CONFIG_IEEE80211W */
 	STR(id_str);
-	INT(disable_pm);
-	INT(disable_network_shares); 
 
 #undef STR
 #undef INT

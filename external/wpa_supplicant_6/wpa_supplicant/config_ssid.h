@@ -335,14 +335,6 @@ struct wpa_ssid {
 	 */
 	int frequency;
 
-   /**
-     * disable_pm - dummy parameter
-     *
-     * This variable is just a dummy
-     */
-    int disable_pm;
-
-
 	/**
 	 * wpa_ptk_rekey - Maximum lifetime for PTK in seconds
 	 *
@@ -350,23 +342,6 @@ struct wpa_ssid {
 	 * attacks against TKIP deficiencies.
 	 */
 	int wpa_ptk_rekey;
-	
-	/** 
-	 * disable_network_shares - dummy parameter 
-	 * 
-	 * This variable is just a dummy 
-	 */ 
-	int disable_network_shares;     
-
-	/**
-	 * beacon_int - Initial beacon interval for IBSS/adhoc networks
-	 */
-	int beacon_int;
-
-	/**
-	 * channel - Initial channel number of IBSS/adhoc networks
-	 */
-	int channel;
 };
 
 #endif /* CONFIG_SSID_H */

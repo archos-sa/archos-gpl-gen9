@@ -34,7 +34,7 @@
 #include "wpa_ctrl.h"
 #include "wpa_supplicant_i.h"
 #include "config.h"
-#include "config_ssid.h"
+
 
 static int wpa_driver_wext_flush_pmkid(void *priv);
 static int wpa_driver_wext_get_range(void *priv);
@@ -2367,8 +2367,6 @@ static int wpa_driver_wext_set_auth_alg(void *priv, int auth_alg)
 int wpa_driver_wext_set_mode(void *priv, int mode)
 {
 	struct wpa_driver_wext_data *drv = priv;
-	struct wpa_supplicant *wpa_s = (struct wpa_supplicant *)(drv->ctx);
-	struct wpa_config *wpa_conf = (struct wpa_config *)(wpa_s->conf);
 	struct iwreq iwr;
 	int ret = -1, flags;
 	unsigned int new_mode = mode ? IW_MODE_ADHOC : IW_MODE_INFRA;
@@ -2376,14 +2374,6 @@ int wpa_driver_wext_set_mode(void *priv, int mode)
 	os_memset(&iwr, 0, sizeof(iwr));
 	os_strlcpy(iwr.ifr_name, drv->ifname, IFNAMSIZ);
 	iwr.u.mode = new_mode;
-
-	if (new_mode == IW_MODE_INFRA)
-		wpa_conf->ap_scan = 1;
-	else if (new_mode == IW_MODE_ADHOC)
-		wpa_conf->ap_scan = 2;
-	else
-		wpa_printf(MSG_ERROR,"wpa_driver_tista_set_network_mode: Unspecified mode");
-
 	if (ioctl(drv->ioctl_sock, SIOCSIWMODE, &iwr) == 0) {
 		ret = 0;
 		goto done;

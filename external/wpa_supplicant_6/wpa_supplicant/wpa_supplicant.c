@@ -39,9 +39,6 @@
 #include "blacklist.h"
 #include "wpas_glue.h"
 #include "wps_supplicant.h"
-#ifdef ANDROID
-#include <cutils/properties.h>
-#endif
 
 const char *wpa_supplicant_version =
 "wpa_supplicant v" VERSION_STR "\n"
@@ -239,33 +236,6 @@ void wpa_supplicant_cancel_auth_timeout(struct wpa_supplicant *wpa_s)
 	wpa_blacklist_del(wpa_s, wpa_s->bssid);
 }
 
-
-/**
- * wpa_eapol_set_wep_key - set WEP key for the driver
- * @ctx: Pointer to wpa_supplicant data (wpa_s)
- * @unicast: 1 = individual unicast key, 0 = broadcast key
- * @keyidx: WEP key index (0..3)
- * @key: Pointer to key data
- * @keylen: Key length in bytes
- * Returns: 0 on success or < 0 on error.
- */
-int wpa_eapol_set_wep_key(void *ctx, int unicast, int keyidx,
-			  const u8 *key, size_t keylen)
-{
-	struct wpa_supplicant *wpa_s = ctx;
-	if (wpa_s->key_mgmt == WPA_KEY_MGMT_IEEE8021X_NO_WPA) {
-		int cipher = (keylen == 5) ? WPA_CIPHER_WEP40 :
-			WPA_CIPHER_WEP104;
-		if (unicast)
-			wpa_s->pairwise_cipher = cipher;
-		else
-			wpa_s->group_cipher = cipher;
-	}
-	return wpa_drv_set_key(wpa_s, WPA_ALG_WEP,
-			       unicast ? wpa_s->bssid :
-			       (u8 *) "\xff\xff\xff\xff\xff\xff",
-			       keyidx, unicast, (u8 *) "", 0, key, keylen);
-}
 
 /**
  * wpa_supplicant_initiate_eapol - Configure EAPOL state machine
@@ -510,13 +480,9 @@ void wpa_supplicant_set_state(struct wpa_supplicant *wpa_s, wpa_states state)
 {
 #ifdef ANDROID
 	int network_id = -1;
-	if (wpa_s && wpa_s->current_ssid) {
+
+	if (wpa_s && wpa_s->current_ssid)
 		network_id = wpa_s->current_ssid->id;
-	}
-	wpa_states reported_state = state;
-	if (state == WPA_DISCONNECTED && wpa_s->disconnected) {
-		reported_state = WPA_IDLE;
-	}
 #endif
 	wpa_printf(MSG_DEBUG, "State: %s -> %s",
 		   wpa_supplicant_state_txt(wpa_s->wpa_state),
@@ -529,7 +495,7 @@ void wpa_supplicant_set_state(struct wpa_supplicant *wpa_s, wpa_states state)
 						wpa_s->wpa_state);
 #ifdef ANDROID
 	wpa_msg(wpa_s, MSG_INFO, WPA_EVENT_STATE_CHANGE "id=%d state=%d BSSID=" MACSTR,
-		network_id, reported_state, MAC2STR(wpa_s->pending_bssid));
+		network_id, state, MAC2STR(wpa_s->pending_bssid));
 #endif
 
 	if (state == WPA_COMPLETED && wpa_s->new_connection) {
@@ -968,7 +934,6 @@ void wpa_supplicant_associate(struct wpa_supplicant *wpa_s,
 	int wep_keys_set = 0;
 	struct wpa_driver_capa capa;
 	int assoc_failed = 0;
-	int mode = wpa_s->adhoc = 0;
 
 	wpa_s->reassociate = 0;
 	if (bss) {
@@ -983,8 +948,6 @@ void wpa_supplicant_associate(struct wpa_supplicant *wpa_s,
 		os_memcpy(wpa_s->pending_bssid, bss->bssid, ETH_ALEN);
 		wpa_s->link_speed = wpa_scan_get_max_rate(bss) * 500000;
 		wpa_s->rssi = bss->level;
-		if (bss->caps & IEEE80211_CAP_IBSS)
-			mode = 1;
 #ifdef CONFIG_IEEE80211R
 		ie = wpa_scan_get_ie(bss, WLAN_EID_MOBILITY_DOMAIN);
 		if (ie && ie[1] >= MOBILITY_DOMAIN_ID_LEN)
@@ -1012,7 +975,6 @@ void wpa_supplicant_associate(struct wpa_supplicant *wpa_s,
 		os_memset(wpa_s->pending_bssid, 0, ETH_ALEN);
 	}
 	wpa_supplicant_cancel_scan(wpa_s);
-	mode = ssid->mode;
 
 	/* Starting new association, so clear the possibly used WPA IE from the
 	 * previous association. */
@@ -1156,7 +1118,7 @@ void wpa_supplicant_associate(struct wpa_supplicant *wpa_s,
 	params.group_suite = cipher_group;
 	params.key_mgmt_suite = key_mgmt2driver(wpa_s->key_mgmt);
 	params.auth_alg = algs;
-	params.mode = mode;
+	params.mode = ssid->mode;
 	for (i = 0; i < NUM_WEP_KEYS; i++) {
 		if (ssid->wep_key_len[i])
 			params.wep_key[i] = ssid->wep_key[i];
@@ -1768,7 +1730,9 @@ static struct wpa_supplicant * wpa_supplicant_alloc(void)
 	if (wpa_s == NULL)
 		return NULL;
 	wpa_s->scan_req = 1;
-
+#ifdef ANDROID
+	wpa_s->scan_interval = 5;
+#endif
 	return wpa_s;
 }
 
@@ -2040,16 +2004,6 @@ struct wpa_supplicant * wpa_supplicant_add_iface(struct wpa_global *global,
 		return NULL;
 	}
 
-#ifdef ANDROID
-    char scan_prop[PROPERTY_VALUE_MAX];
-    char *endp;
-    if (property_get("wifi.supplicant_scan_interval", scan_prop, "6") != 0) {
-        wpa_s->scan_interval = (int)strtol(scan_prop, &endp, 0);
-        if (endp == scan_prop) {
-            wpa_s->scan_interval = 6;
-        }
-    }
-#endif
 	wpa_s->next = global->ifaces;
 	global->ifaces = wpa_s;
 

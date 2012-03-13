@@ -1028,14 +1028,6 @@ struct wpa_driver_ops {
 	void * (*init2)(void *ctx, const char *ifname, void *global_priv);
 
 	/**
-	 * set_beacon_int - Set beacon interval for adhoc mode
-	 * @priv: private driver interface data
-	 * @beacon_int: Beacon interval in TU (100 = 0.1024 sec)
-	 * Returns: 0 on success, -1 on failure
-	 */
-	int (*set_beacon_int)(void *priv, int beacon_int);
-
-	/**
 	 * get_interfaces - Get information about available interfaces
 	 * @global_priv: private driver global data from global_init()
 	 * Returns: Allocated buffer of interface information (caller is

@@ -351,7 +351,6 @@ struct wpa_supplicant {
 
 	struct wpa_client_mlme mlme;
 	int use_client_mlme;
-	int adhoc;
 	int driver_4way_handshake;
 
 	int pending_mic_error_report;
@@ -498,16 +497,6 @@ static inline int wpa_drv_set_mode(struct wpa_supplicant *wpa_s, int mode)
 		return wpa_s->driver->set_mode(wpa_s->drv_priv, mode);
 	}
 	return 0;
-}
-
-static inline int wpa_drv_set_beacon_int(struct wpa_supplicant *wpa_s,
-					 int beacon_int)
-{
-	if (wpa_s->driver->set_beacon_int) {
-		return wpa_s->driver->set_beacon_int(wpa_s->drv_priv,
-						     beacon_int);
-	}
-	return -1;
 }
 
 static inline int wpa_drv_associate(struct wpa_supplicant *wpa_s,
