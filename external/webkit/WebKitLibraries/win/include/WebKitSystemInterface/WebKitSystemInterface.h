@@ -35,6 +35,7 @@ struct WKCACFContext;
 struct WKCACFUpdateRectEnumerator;
 
 typedef struct _CACFLayer* CACFLayerRef;
+typedef const struct __CFArray* CFArrayRef;
 typedef const struct __CFData* CFDataRef;
 typedef const struct __CFString* CFStringRef;
 typedef double CFTimeInterval;
@@ -46,6 +47,7 @@ typedef CGFontIndex CGGlyph;
 typedef wchar_t UChar;
 typedef struct _CFURLResponse* CFURLResponseRef;
 typedef struct OpaqueCFHTTPCookieStorage*  CFHTTPCookieStorageRef;
+typedef struct __CFDictionary* CFMutableDictionaryRef;
 typedef struct _CFURLRequest* CFMutableURLRequestRef;
 typedef const struct _CFURLRequest* CFURLRequestRef;
 typedef struct __CFHTTPMessage* CFHTTPMessageRef;
@@ -62,6 +64,8 @@ typedef CVImageBufferRef CVPixelBufferRef;
 typedef struct _CAImageQueue *CAImageQueueRef;
 typedef unsigned long CFTypeID;
 typedef struct _CFURLCredential* WKCFURLCredentialRef;
+typedef const struct __CFURLStorageSession* CFURLStorageSessionRef;
+typedef const struct _CFURLCache* CFURLCacheRef;
 
 void wkSetFontSmoothingLevel(int type);
 int wkGetFontSmoothingLevel();
@@ -82,16 +86,26 @@ CGAffineTransform wkGetUserToBaseCTM(CGContextRef);
 void wkDrawFocusRing(CGContextRef, CGColorRef, float radius);
 
 CFDictionaryRef wkGetSSLCertificateInfo(CFURLResponseRef);
-void* wkGetSSLPeerCertificateData(CFDictionaryRef);
+CFDataRef wkGetSSLPeerCertificateData(CFDictionaryRef);
+void* wkGetSSLPeerCertificateDataBytePtr(CFDictionaryRef);
+void wkSetSSLPeerCertificateData(CFMutableDictionaryRef, CFDataRef);
 void* wkGetSSLCertificateChainContext(CFDictionaryRef);
 CFHTTPCookieStorageRef wkGetDefaultHTTPCookieStorage();
-CFHTTPCookieStorageRef wkCreatePrivateHTTPCookieStorage();
+CFHTTPCookieStorageRef wkCreateInMemoryHTTPCookieStorage();
 void wkSetCFURLRequestShouldContentSniff(CFMutableURLRequestRef, bool);
 CFStringRef wkCopyFoundationCacheDirectory();
 void wkSetClientCertificateInSSLProperties(CFMutableDictionaryRef, CFDataRef);
 
 CFArrayRef wkCFURLRequestCopyHTTPRequestBodyParts(CFURLRequestRef);
 void wkCFURLRequestSetHTTPRequestBodyParts(CFMutableURLRequestRef, CFArrayRef bodyParts);
+
+CFURLStorageSessionRef wkCreatePrivateStorageSession(CFStringRef identifier);
+void wkSetRequestStorageSession(CFURLStorageSessionRef, CFMutableURLRequestRef);
+CFURLCacheRef wkCopyURLCache(CFURLStorageSessionRef);
+CFHTTPCookieStorageRef wkCopyHTTPCookieStorage(CFURLStorageSessionRef);
+
+CFArrayRef wkCFURLCacheCopyAllHostNamesInPersistentStore();
+void wkCFURLCacheDeleteHostNamesInPersistentStore(CFArrayRef hostNames);
 
 unsigned wkInitializeMaximumHTTPConnectionCountPerHost(unsigned preferredConnectionCount);
 
@@ -144,7 +158,15 @@ void wkCACFContextDestroy(WKCACFContext*);
 void wkCACFContextSetLayer(WKCACFContext*, CACFLayerRef);
 void wkCACFContextFlush(WKCACFContext*);
 
-void wkCACFContextInitializeD3DDevice(WKCACFContext*, IDirect3DDevice9*);
+CFTimeInterval wkCACFContextGetLastCommitTime(WKCACFContext*);
+CFTimeInterval wkCACFContextGetNextUpdateTime(WKCACFContext*);
+
+void* wkCACFContextGetUserData(WKCACFContext*);
+void wkCACFContextSetUserData(WKCACFContext*, void*);
+
+void* wkCACFLayerGetContextUserData(CACFLayerRef);
+
+void wkCACFContextSetD3DDevice(WKCACFContext*, IDirect3DDevice9*);
 void wkCACFContextReleaseD3DResources(WKCACFContext*);
 
 bool wkCACFContextBeginUpdate(WKCACFContext*, void* buffer, size_t bufferSize, CFTimeInterval time, const CGRect& bounds, const CGRect dirtyRects[], size_t dirtyRectCount);
@@ -155,6 +177,14 @@ void wkCACFContextAddUpdateRect(WKCACFContext*, const CGRect&);
 WKCACFUpdateRectEnumerator* wkCACFContextCopyUpdateRectEnumerator(WKCACFContext*);
 const CGRect* wkCACFUpdateRectEnumeratorNextRect(WKCACFUpdateRectEnumerator*);
 void wkCACFUpdateRectEnumeratorRelease(WKCACFUpdateRectEnumerator*);
+
+CFDictionaryRef wkCFURLRequestCreateSerializableRepresentation(CFURLRequestRef cfRequest, CFTypeRef tokenNull);
+CFURLRequestRef wkCFURLRequestCreateFromSerializableRepresentation(CFDictionaryRef representation, CFTypeRef tokenNull);
+CFDictionaryRef wkCFURLResponseCreateSerializableRepresentation(CFURLResponseRef cfResponse, CFTypeRef tokenNull);
+CFURLResponseRef wkCFURLResponseCreateFromSerializableRepresentation(CFDictionaryRef representation, CFTypeRef tokenNull);
+
+typedef void (*wkQuickTimeMIMETypeCallBack)(const char* mimeType);
+void wkGetQuickTimeMIMETypeList(wkQuickTimeMIMETypeCallBack);
 
 typedef enum {
     WKMediaUIPartFullscreenButton   = 0,

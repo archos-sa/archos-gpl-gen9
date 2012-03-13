@@ -19,43 +19,31 @@ function test()
     shouldBeTrue("'webkitIndexedDB' in window");
     shouldBeFalse("webkitIndexedDB == null");
 
-    result = evalAndLog("webkitIndexedDB.open('name', 'description')");
-    verifyResult(result);
-    result.onsuccess = openSuccess;
-    result.onerror = unexpectedErrorCallback;
+    request = evalAndLog("webkitIndexedDB.open('create-object-store-options', 'description')");
+    request.onsuccess = openSuccess;
+    request.onerror = unexpectedErrorCallback;
 }
 
 function openSuccess()
 {
-    db = evalAndLog("db = event.result");
+    db = evalAndLog("db = event.target.result");
 
-    result = evalAndLog("result = db.setVersion('version 1')");
-    result.onsuccess = cleanDatabase;
-    result.onerror = unexpectedErrorCallback;
+    request = evalAndLog("request = db.setVersion('version 1')");
+    request.onsuccess = cleanDatabase;
+    request.onerror = unexpectedErrorCallback;
 }
 
 function cleanDatabase()
 {
-    deleteAllObjectStores(db, cleaned);
-}
+    deleteAllObjectStores(db);
 
-function cleaned()
-{
     evalAndLog("db.createObjectStore('a', {keyPath: 'a'})");
     evalAndLog("db.createObjectStore('b')");
 
-    try {
-        // FIXME: This should work in the future.
-        debug("db.createObjectStore('c', {autoIncrement: true});");
-        db.createObjectStore('c', {autoIncrement: true});
-        testFailed('createObjectStore with autoIncrement = true should throw');
-    } catch (err) {
-        testPassed("Exception thrown");
-        code = err.code;
-        shouldBe("code", "webkitIDBDatabaseException.UNKNOWN_ERR");
-    }
+    debug("db.createObjectStore('c', {autoIncrement: true});");
+    db.createObjectStore('c', {autoIncrement: true});
 
-    trans = evalAndLog("trans = db.transaction({mode: webkitIDBTransaction.READ_WRITE})");
+    trans = evalAndLog("trans = db.transaction([], webkitIDBTransaction.READ_WRITE)");
     shouldBe("trans.mode", "webkitIDBTransaction.READ_WRITE");
 
     req = evalAndLog("trans.objectStore('a').put({'a': 0})");
@@ -79,7 +67,7 @@ function getA()
 
 function getB()
 {
-    shouldBe("event.result.a", "{a: 0}");
+    shouldBe("event.target.result.a", "{a: 0}");
 
     req = evalAndLog("trans.objectStore('b').get(0)");
     req.onsuccess = checkB;
@@ -88,7 +76,7 @@ function getB()
 
 function checkB()
 {
-    shouldBe("event.result.a", "{a: 0}");
+    shouldBe("event.target.result.a", "{a: 0}");
 
     done();
 }
