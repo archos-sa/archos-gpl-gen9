@@ -238,7 +238,7 @@ include toolchain/uClibc/uclibc.mk
 # Make sure we can find the compiler
 PATH:=$(STAGING_DIR)/usr/bin/:$(PATH)
 
-include ../linux/kernel.mk
+include ../linux-ics/kernel.mk
 else
 include toolchain/*/*.mk
 endif
