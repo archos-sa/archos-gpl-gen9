@@ -31,7 +31,6 @@
 #include <netinet/in.h>
 
 #include <bluetooth/bluetooth.h>
-#include <bluetooth/hci.h>
 #include <bluetooth/bnep.h>
 #include <bluetooth/sdp.h>
 
@@ -69,7 +68,6 @@ struct network_conn {
 	DBusMessage	*msg;
 	char		dev[16];	/* Interface name */
 	uint16_t	id;		/* Role: Service Class Identifier */
-	uint16_t	role;		/* Role: Service Class Identifier of device (phone) */
 	conn_state	state;
 	GIOChannel	*io;
 	guint		watch;		/* Disconnect watch */
@@ -87,10 +85,8 @@ static GSList *peers = NULL;
 
 static struct network_peer *find_peer(GSList *list, const char *path)
 {
-	GSList *l;
-
-	for (l = list; l; l = l->next) {
-		struct network_peer *peer = l->data;
+	for (; list; list = list->next) {
+		struct network_peer *peer = list->data;
 
 		if (!strcmp(peer->path, path))
 			return peer;
@@ -101,48 +97,14 @@ static struct network_peer *find_peer(GSList *list, const char *path)
 
 static struct network_conn *find_connection(GSList *list, uint16_t id)
 {
-	GSList *l;
-
-	for (l = list; l; l = l->next) {
-		struct network_conn *nc = l->data;
+	for (; list; list = list->next) {
+		struct network_conn *nc = list->data;
 
 		if (nc->id == id)
 			return nc;
 	}
 
 	return NULL;
-}
-
-static inline DBusMessage *not_supported(DBusMessage *msg)
-{
-	return g_dbus_create_error(msg, ERROR_INTERFACE ".Failed",
-							"Not supported");
-}
-
-static inline DBusMessage *already_connected(DBusMessage *msg)
-{
-	return g_dbus_create_error(msg, ERROR_INTERFACE ".Failed",
-						"Device already connected");
-}
-
-static inline DBusMessage *not_connected(DBusMessage *msg)
-{
-	return g_dbus_create_error(msg, ERROR_INTERFACE ".Failed",
-						"Device not connected");
-}
-
-static inline DBusMessage *not_permited(DBusMessage *msg)
-{
-	return g_dbus_create_error(msg, ERROR_INTERFACE ".Failed",
-						"Operation not permited");
-}
-
-static inline DBusMessage *connection_attempt_failed(DBusMessage *msg,
-							const char *err)
-{
-	return g_dbus_create_error(msg,
-				ERROR_INTERFACE ".ConnectionAttemptFailed",
-				err ? err : "Connection attempt failed");
 }
 
 static gboolean bnep_watchdog_cb(GIOChannel *chan, GIOCondition cond,
@@ -190,7 +152,7 @@ static void cancel_connection(struct network_conn *nc, const char *err_msg)
 	}
 
 	if (nc->msg && err_msg) {
-		reply = connection_attempt_failed(nc->msg, err_msg);
+		reply = btd_error_failed(nc->msg, err_msg);
 		g_dbus_send_message(connection, reply);
 	}
 
@@ -229,7 +191,7 @@ static gboolean bnep_setup_cb(GIOChannel *chan, GIOCondition cond,
 	struct bnep_control_rsp *rsp;
 	struct timeval timeo;
 	char pkt[BNEP_MTU];
-	gsize r;
+	ssize_t r;
 	int sk;
 	const char *pdev, *uuid;
 	gboolean connected;
@@ -242,21 +204,23 @@ static gboolean bnep_setup_cb(GIOChannel *chan, GIOCondition cond,
 		goto failed;
 	}
 
+	sk = g_io_channel_unix_get_fd(chan);
+
 	memset(pkt, 0, BNEP_MTU);
-	if (g_io_channel_read(chan, pkt, sizeof(pkt) - 1,
-				&r) != G_IO_ERROR_NONE) {
+	r = read(sk, pkt, sizeof(pkt) -1);
+	if (r < 0) {
 		error("IO Channel read error");
 		goto failed;
 	}
 
-	if (r <= 0) {
+	if (r == 0) {
 		error("No packet received on l2cap socket");
 		goto failed;
 	}
 
 	errno = EPROTO;
 
-	if (r < sizeof(*rsp)) {
+	if ((size_t) r < sizeof(*rsp)) {
 		error("Packet received is not bnep type");
 		goto failed;
 	}
@@ -277,14 +241,12 @@ static gboolean bnep_setup_cb(GIOChannel *chan, GIOCondition cond,
 		goto failed;
 	}
 
-	sk = g_io_channel_unix_get_fd(chan);
-
 	memset(&timeo, 0, sizeof(timeo));
 	timeo.tv_sec = 0;
 
 	setsockopt(sk, SOL_SOCKET, SO_RCVTIMEO, &timeo, sizeof(timeo));
 
-	if (bnep_connadd(sk, nc->role, nc->dev)) {
+	if (bnep_connadd(sk, BNEP_SVC_PANU, nc->dev)) {
 		error("%s could not be added", nc->dev);
 		goto failed;
 	}
@@ -342,7 +304,7 @@ static int bnep_connect(struct network_conn *nc)
 	req->uuid_size = 2;	/* 16bit UUID */
 	s = (void *) req->service;
 	s->dst = htons(nc->id);
-	s->src = htons(nc->role);
+	s->src = htons(BNEP_SVC_PANU);
 
 	memset(&timeo, 0, sizeof(timeo));
 	timeo.tv_sec = 30;
@@ -386,24 +348,26 @@ failed:
 
 /* Connect and initiate BNEP session */
 static DBusMessage *connection_connect(DBusConnection *conn,
-				DBusMessage *msg, void *data, char *src_svc, char *dst_svc)
+						DBusMessage *msg, void *data)
 {
 	struct network_peer *peer = data;
 	struct network_conn *nc;
-	uint16_t src_id;
-	uint16_t dst_id;
+	const char *svc;
+	uint16_t id;
 	GError *err = NULL;
 
-	src_id = bnep_service_id(src_svc);
-	dst_id = bnep_service_id(dst_svc);
+	if (dbus_message_get_args(msg, NULL, DBUS_TYPE_STRING, &svc,
+						DBUS_TYPE_INVALID) == FALSE)
+		return NULL;
 
-	nc = find_connection(peer->connections, dst_id);
+	id = bnep_service_id(svc);
+	nc = find_connection(peer->connections, id);
 	if (!nc)
-		return not_supported(msg);
+		return btd_error_not_supported(msg);
 
 	if (nc->state != DISCONNECTED)
-		return already_connected(msg);
-	nc->role = src_id;
+		return btd_error_already_connected(msg);
+
 	nc->io = bt_io_connect(BT_IO_L2CAP, connect_cb, nc,
 				NULL, &err,
 				BT_IO_OPT_SOURCE_BDADDR, &peer->src,
@@ -415,7 +379,7 @@ static DBusMessage *connection_connect(DBusConnection *conn,
 	if (!nc->io) {
 		DBusMessage *reply;
 		error("%s", err->message);
-		reply = connection_attempt_failed(msg, err->message);
+		reply = btd_error_failed(msg, err->message);
 		g_error_free(err);
 		return reply;
 	}
@@ -430,32 +394,6 @@ static DBusMessage *connection_connect(DBusConnection *conn,
 	return NULL;
 }
 
-static DBusMessage *connection_connect_panu(DBusConnection *conn,
-						DBusMessage *msg, void *data)
-{
-	char *src_svc;
-	char *dst_svc;
-	src_svc = g_strdup("panu");
-	if (dbus_message_get_args(msg, NULL, DBUS_TYPE_STRING, &dst_svc,
-						DBUS_TYPE_INVALID) == FALSE)
-		return NULL;
-	connection_connect(conn, msg, data, src_svc, dst_svc);
-	return NULL;
-}
-
-static DBusMessage *connection_connect_generic(DBusConnection *conn,
-						DBusMessage *msg, void *data)
-{
-	char *src_svc;
-	char *dst_svc;
-	if (dbus_message_get_args(msg, NULL, DBUS_TYPE_STRING, &src_svc,
-						DBUS_TYPE_STRING, &dst_svc,
-						DBUS_TYPE_INVALID) == FALSE)
-		return NULL;
-	connection_connect(conn, msg, data, src_svc, dst_svc);
-	return NULL;
-}
-
 static DBusMessage *connection_cancel(DBusConnection *conn,
 						DBusMessage *msg, void *data)
 {
@@ -464,7 +402,7 @@ static DBusMessage *connection_cancel(DBusConnection *conn,
 	const char *caller = dbus_message_get_sender(msg);
 
 	if (!g_str_equal(owner, caller))
-		return not_permited(msg);
+		return btd_error_not_authorized(msg);
 
 	connection_destroy(conn, nc);
 
@@ -486,7 +424,7 @@ static DBusMessage *connection_disconnect(DBusConnection *conn,
 		return connection_cancel(conn, msg, nc);
 	}
 
-	return not_connected(msg);
+	return btd_error_not_connected(msg);
 }
 
 static DBusMessage *connection_get_properties(DBusConnection *conn,
@@ -571,9 +509,7 @@ static void path_unregister(void *data)
 }
 
 static GDBusMethodTable connection_methods[] = {
-	{ "Connect",  "s", "s", connection_connect_panu,
-              G_DBUS_METHOD_FLAG_ASYNC },
-	{ "Connect", "ss",	"s", connection_connect_generic,
+	{ "Connect",		"s",	"s",	connection_connect,
 						G_DBUS_METHOD_FLAG_ASYNC },
 	{ "Disconnect",		"",	"",	connection_disconnect	},
 	{ "GetProperties",	"",	"a{sv}",connection_get_properties },

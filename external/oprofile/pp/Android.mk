@@ -1,34 +1,41 @@
+# Copyright (C) 2011 The Android Open Source Project
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 LOCAL_PATH:= $(call my-dir)
+
+include $(LOCAL_PATH)/../common.mk
 
 common_src := common_option.cpp
 
-common_includes := \
-	external/oprofile \
-	external/oprofile/libutil \
-	external/oprofile/libop \
-	external/oprofile/libdb \
-	external/oprofile/libopt++ \
-	external/oprofile/libutil++ \
-	external/oprofile/libregex \
-	external/oprofile/libpp
-
 common_libs := \
-	libpp \
-	libop \
-	libutil \
-	libdb \
-	libop_regex \
-	libopt++ \
-	libutil++ \
-	libpopt \
-	libz
+	liboprofile_pp \
+	liboprofile_db \
+	liboprofile_op_regex \
+	liboprofile_opt++ \
+	liboprofile_util++ \
+	liboprofile_popt \
+	liboprofile_op \
+	liboprofile_util \
+	libbfd \
+	libiberty \
+	libintl
 
-common_cflags := -fexceptions -DANDROID_HOST
-common_ldlibs := -lbfd -liberty -lintl -liconv
+common_ldlibs := -lz $(common_host_ldlibs_libiconv)
 
 ifeq ($(HAVE_LIBBFD),true)
 
-# Build opreport
+# Build opreport on host
 include $(CLEAR_VARS)
 
 LOCAL_SRC_FILES:= \
@@ -37,15 +44,15 @@ LOCAL_SRC_FILES:= \
 	opreport_options.cpp
 
 LOCAL_STATIC_LIBRARIES := $(common_libs)
-LOCAL_C_INCLUDES := $(common_includes)
-LOCAL_CFLAGS := $(common_cflags)
+LOCAL_C_INCLUDES := $(common_host_c_includes)
+LOCAL_CFLAGS := $(common_host_cflags) -fpermissive
 LOCAL_LDLIBS := $(common_ldlibs)
 LOCAL_MODULE_TAGS := optional
 LOCAL_MODULE:= opreport
 
 include $(BUILD_HOST_EXECUTABLE)
 
-# Build opannotate
+# Build opannotate on host
 include $(CLEAR_VARS)
 
 LOCAL_SRC_FILES:= \
@@ -54,8 +61,8 @@ LOCAL_SRC_FILES:= \
 	opannotate_options.cpp
 
 LOCAL_STATIC_LIBRARIES := $(common_libs)
-LOCAL_C_INCLUDES := $(common_includes)
-LOCAL_CFLAGS := $(common_cflags)
+LOCAL_C_INCLUDES := $(common_host_c_includes)
+LOCAL_CFLAGS := $(common_host_cflags)
 LOCAL_LDLIBS := $(common_ldlibs)
 LOCAL_MODULE_TAGS := optional
 LOCAL_MODULE:= opannotate
@@ -71,8 +78,8 @@ LOCAL_SRC_FILES:= \
 	opgprof_options.cpp
 
 LOCAL_STATIC_LIBRARIES := $(common_libs)
-LOCAL_C_INCLUDES := $(common_includes)
-LOCAL_CFLAGS := $(common_cflags)
+LOCAL_C_INCLUDES := $(common_host_c_includes)
+LOCAL_CFLAGS := $(common_host_cflags)
 LOCAL_LDLIBS := $(common_ldlibs)
 LOCAL_MODULE_TAGS := optional
 LOCAL_MODULE:= opgprof
@@ -88,8 +95,8 @@ LOCAL_SRC_FILES:= \
 	oparchive_options.cpp
 
 LOCAL_STATIC_LIBRARIES := $(common_libs)
-LOCAL_C_INCLUDES := $(common_includes)
-LOCAL_CFLAGS := $(common_cflags)
+LOCAL_C_INCLUDES := $(common_host_c_includes)
+LOCAL_CFLAGS := $(common_host_cflags)
 LOCAL_LDLIBS := $(common_ldlibs)
 LOCAL_MODULE_TAGS := optional
 LOCAL_MODULE:= oparchive

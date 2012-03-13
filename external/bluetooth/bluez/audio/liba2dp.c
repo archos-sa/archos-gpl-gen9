@@ -194,20 +194,20 @@ static int l2cap_set_flushable(int fd, int flushable)
 	socklen_t len;
 
 	len = sizeof(flags);
-	if (getsockopt(fd, SOL_L2CAP, L2CAP_LM, &flags, &len) < 0)
+	if (getsockopt(fd, SOL_BLUETOOTH, BT_FLUSHABLE, &flags, &len) < 0)
 		return -errno;
 
 	if (flushable) {
-		if (flags & L2CAP_LM_FLUSHABLE)
+		if (flags == BT_FLUSHABLE_ON)
 			return 0;
-		flags |= L2CAP_LM_FLUSHABLE;
+		flags = BT_FLUSHABLE_ON;
 	} else {
-		if (!(flags & L2CAP_LM_FLUSHABLE))
+		if (flags == BT_FLUSHABLE_OFF)
 			return 0;
-		flags &= ~L2CAP_LM_FLUSHABLE;
+		flags = BT_FLUSHABLE_OFF;
 	}
 
-	if (setsockopt(fd, SOL_L2CAP, L2CAP_LM, &flags, sizeof(flags)) < 0)
+	if (setsockopt(fd, SOL_BLUETOOTH, L2CAP_LM, &flags, sizeof(flags)) < 0)
 		return -errno;
 
 	return 0;
@@ -272,8 +272,11 @@ static int bluetooth_start(struct bluetooth_data *data)
 
 error:
 	/* close bluetooth connection to force reinit and reconfiguration */
-	if (data->state == A2DP_STATE_STARTING)
+	if (data->state == A2DP_STATE_STARTING) {
 		bluetooth_close(data);
+		/* notify client that thread is ready for next command */
+		pthread_cond_signal(&data->client_wait);
+        }
 	return err;
 }
 
@@ -928,8 +931,11 @@ static int bluetooth_configure(struct bluetooth_data *data)
 
 error:
 
-	if (data->state == A2DP_STATE_CONFIGURING)
+	if (data->state == A2DP_STATE_CONFIGURING) {
 		bluetooth_close(data);
+		/* notify client that thread is ready for next command */
+		pthread_cond_signal(&data->client_wait);
+        }
 	return err;
 }
 

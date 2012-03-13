@@ -2,8 +2,6 @@
 # See also config.h to turn on verbose logs
 LOG_TO_ANDROID_LOGCAT := true
 
-ifneq ($(TARGET_SIMULATOR),true)
-
 LOCAL_PATH:= $(call my-dir)
 include $(CLEAR_VARS)
 
@@ -67,6 +65,7 @@ LOCAL_MODULE:=libdbus
 LOCAL_CFLAGS+= \
 	-DDBUS_COMPILATION \
 	-DANDROID_MANAGED_SOCKET \
+    -DANDROID_ATOMIC \
 	-DDBUS_MACHINE_UUID_FILE=\"/etc/machine-id\" \
     -DDBUS_SYSTEM_CONFIG_FILE=\"/system/etc/dbus.conf\" \
     -DDBUS_SESSION_CONFIG_FILE=\"/system/etc/session.conf\"
@@ -78,5 +77,3 @@ LOCAL_SHARED_LIBRARIES+= libcutils
 endif
 
 include $(BUILD_SHARED_LIBRARY)
-
-endif

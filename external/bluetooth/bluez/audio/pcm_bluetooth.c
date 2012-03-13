@@ -44,7 +44,7 @@
 #include "sbc.h"
 #include "rtp.h"
 
-//#define ENABLE_DEBUG
+/* #define ENABLE_DEBUG */
 
 #define UINT_SECS_MAX (UINT_MAX / 1000000 - 1)
 
@@ -237,9 +237,11 @@ iter_sleep:
 		ret = poll(fds, 2, poll_timeout);
 
 		if (ret < 0) {
-			SNDERR("poll error: %s (%d)", strerror(errno), errno);
-			if (errno != EINTR)
+			if (errno != EINTR) {
+				SNDERR("poll error: %s (%d)", strerror(errno),
+								errno);
 				break;
+			}
 		} else if (ret > 0) {
 			ret = (fds[0].revents) ? 0 : 1;
 			SNDERR("poll fd %d revents %d", ret, fds[ret].revents);
@@ -818,7 +820,6 @@ static int bluetooth_playback_poll_revents(snd_pcm_ioplug_t *io,
 					unsigned short *revents)
 {
 	static char buf[1];
-	int ret;
 
 	DBG("");
 
@@ -829,7 +830,8 @@ static int bluetooth_playback_poll_revents(snd_pcm_ioplug_t *io,
 	assert(pfds[1].fd >= 0);
 
 	if (io->state != SND_PCM_STATE_PREPARED)
-		ret = read(pfds[0].fd, buf, 1);
+		if (read(pfds[0].fd, buf, 1) < 0)
+			SYSERR("read error: %s (%d)", strerror(errno), errno);
 
 	if (pfds[1].revents & (POLLERR | POLLHUP | POLLNVAL))
 		io->state = SND_PCM_STATE_DISCONNECTED;
@@ -1050,8 +1052,11 @@ static snd_pcm_sframes_t bluetooth_a2dp_write(snd_pcm_ioplug_t *io,
 	}
 
 	/* Check if we have any left over data from the last write */
-	if (data->count > 0 && (bytes_left - data->count) >= a2dp->codesize) {
-		int additional_bytes_needed = a2dp->codesize - data->count;
+	if (data->count > 0) {
+		unsigned int additional_bytes_needed =
+						a2dp->codesize - data->count;
+		if (additional_bytes_needed > bytes_left)
+			goto out;
 
 		memcpy(data->buffer + data->count, buff,
 						additional_bytes_needed);
@@ -1122,6 +1127,7 @@ static snd_pcm_sframes_t bluetooth_a2dp_write(snd_pcm_ioplug_t *io,
 		}
 	}
 
+out:
 	/* Copy the extra to our temp buffer for the next write */
 	if (bytes_left > 0) {
 		memcpy(data->buffer + data->count, buff, bytes_left);

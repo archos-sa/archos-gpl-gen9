@@ -31,9 +31,7 @@
 #include <errno.h>
 
 #include <bluetooth/bluetooth.h>
-#include <bluetooth/hci.h>
 #include <bluetooth/bnep.h>
-#include <bluetooth/l2cap.h>
 #include <bluetooth/sdp.h>
 #include <bluetooth/sdp_lib.h>
 #include <netinet/in.h>
@@ -91,10 +89,8 @@ static gboolean security = TRUE;
 static struct network_adapter *find_adapter(GSList *list,
 					struct btd_adapter *adapter)
 {
-	GSList *l;
-
-	for (l = list; l; l = l->next) {
-		struct network_adapter *na = l->data;
+	for (; list; list = list->next) {
+		struct network_adapter *na = list->data;
 
 		if (na->adapter == adapter)
 			return na;
@@ -105,10 +101,8 @@ static struct network_adapter *find_adapter(GSList *list,
 
 static struct network_server *find_server(GSList *list, uint16_t id)
 {
-	GSList *l;
-
-	for (l = list; l; l = l->next) {
-		struct network_server *ns = l->data;
+	for (; list; list = list->next) {
+		struct network_server *ns = list->data;
 
 		if (ns->id == id)
 			return ns;
@@ -470,6 +464,21 @@ static gboolean bnep_setup(GIOChannel *chan,
 		return FALSE;
 	}
 
+	/* Highest known Control command ID
+	 * is BNEP_FILTER_MULT_ADDR_RSP = 0x06 */
+	if (req->type == BNEP_CONTROL &&
+				req->ctrl > BNEP_FILTER_MULT_ADDR_RSP) {
+		uint8_t pkt[3];
+
+		pkt[0] = BNEP_CONTROL;
+		pkt[1] = BNEP_CMD_NOT_UNDERSTOOD;
+		pkt[2] = req->ctrl;
+
+		send(sk, pkt, sizeof(pkt), 0);
+
+		return FALSE;
+	}
+
 	if (req->type != BNEP_CONTROL || req->ctrl != BNEP_SETUP_CONN_REQ)
 		return FALSE;
 
@@ -642,26 +651,6 @@ static uint32_t register_server_record(struct network_server *ns)
 	return record->handle;
 }
 
-
-static inline DBusMessage *failed(DBusMessage *msg, const char *description)
-{
-	return g_dbus_create_error(msg, ERROR_INTERFACE ".Failed",
-				description);
-}
-
-static inline DBusMessage *invalid_arguments(DBusMessage *msg,
-					const char *description)
-{
-	return g_dbus_create_error(msg, ERROR_INTERFACE ".InvalidArguments",
-				description);
-}
-
-static inline DBusMessage *not_connected(DBusMessage *msg)
-{
-        return g_dbus_create_error(msg, ERROR_INTERFACE ".Failed",
-                                                "Device not connected");
-}
-
 static void server_disconnect(DBusConnection *conn, void *user_data)
 {
 	struct network_server *ns = user_data;
@@ -689,10 +678,10 @@ static DBusMessage *register_server(DBusConnection *conn,
 		return NULL;
 
 	if (g_strcmp0(uuid, "nap"))
-		return failed(msg, "Invalid UUID");
+		return btd_error_failed(msg, "Invalid UUID");
 
 	if (ns->record_id)
-		return failed(msg, "Already registered");
+		return btd_error_already_exists(msg);
 
 	reply = dbus_message_new_method_return(msg);
 	if (!reply)
@@ -700,7 +689,7 @@ static DBusMessage *register_server(DBusConnection *conn,
 
 	ns->record_id = register_server_record(ns);
 	if (!ns->record_id)
-		return failed(msg, "SDP record registration failed");
+		return btd_error_failed(msg, "SDP record registration failed");
 
 	g_free(ns->bridge);
 	ns->bridge = g_strdup(bridge);
@@ -724,7 +713,7 @@ static DBusMessage *unregister_server(DBusConnection *conn,
 		return NULL;
 
 	if (g_strcmp0(uuid, "nap"))
-		return failed(msg, "Invalid UUID");
+		return btd_error_failed(msg, "Invalid UUID");
 
 	reply = dbus_message_new_method_return(msg);
 	if (!reply)
@@ -755,13 +744,13 @@ static DBusMessage *disconnect_device(DBusConnection *conn,
 	session = find_session_by_addr(ns->sessions, dst_addr);
 
 	if (!session)
-		return failed(msg, "No active session");
+		return btd_error_failed(msg, "No active session");
 
 	if (session->io) {
                 bnep_if_down(devname);
                 bnep_kill_connection(&dst_addr);
 	} else
-		return not_connected(msg);
+		return btd_error_not_connected(msg);
 
 	reply = dbus_message_new_method_return(msg);
 	if (!reply)

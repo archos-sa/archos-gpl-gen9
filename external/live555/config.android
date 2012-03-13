@@ -1,0 +1,15 @@
+C = c
+CPP = cpp
+OBJ = o
+COMPILE_OPTS =	$(INCLUDES) -I. -O2 -DSOCKLEN_T=socklen_t -DNO_SSTREAM=1 -D_LARGEFILE_SOURCE=1 -D_FILE_OFFSET_BITS=64 -DDEBUG=1 -DREAD_FROM_FILES_SYNCHRONOUSLY=1 -DXLOCALE_NOT_USED=1
+C_COMPILER = /home/needle/Work/avx9_hc/buildroot/build_arm/staging_dir/usr/bin/arm-linux-uclibcgnueabi-gcc
+C_FLAGS = $(COMPILE_OPTS) -O2 -pipe  -I/home/needle/Work/avx9_hc/buildroot/build_arm/staging_dir/usr/include -I/home/needle/Work/avx9_hc/buildroot/build_arm/staging_dir/include --sysroot=/home/needle/Work/avx9_hc/buildroot/build_arm/staging_dir/ -isysroot /home/needle/Work/avx9_hc/buildroot/build_arm/staging_dir -mtune=cortex-a8
+CPLUSPLUS_COMPILER = /home/needle/Work/avx9_hc/buildroot/build_arm/staging_dir/usr/bin/arm-linux-uclibcgnueabi-g++
+CPLUSPLUS_FLAGS = $(COMPILE_OPTS) -O2 -pipe  -I/home/needle/Work/avx9_hc/buildroot/build_arm/staging_dir/usr/include -I/home/needle/Work/avx9_hc/buildroot/build_arm/staging_dir/include --sysroot=/home/needle/Work/avx9_hc/buildroot/build_arm/staging_dir/ -isysroot /home/needle/Work/avx9_hc/buildroot/build_arm/staging_dir -mtune=cortex-a8
+LINK = /home/needle/Work/avx9_hc/buildroot/build_arm/staging_dir/usr/bin/arm-linux-uclibcgnueabi-g++ -o 
+LINK_OPTS =
+CONSOLE_LINK_OPTS =
+LIBRARY_LINK = /home/needle/Work/avx9_hc/buildroot/build_arm/staging_dir/usr/bin/arm-linux-uclibcgnueabi-ar cr 
+LIBRARY_LINK_OPTS =
+LIB_SUFFIX = a
+	
