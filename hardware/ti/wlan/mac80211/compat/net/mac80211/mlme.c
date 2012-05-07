@@ -2197,13 +2197,16 @@ static void ieee80211_sta_monitor_work(struct work_struct *work)
 
 static void ieee80211_restart_sta_timer(struct ieee80211_sub_if_data *sdata)
 {
+	u32 flags;
 	if (sdata->vif.type == NL80211_IFTYPE_STATION) {
 		sdata->u.mgd.flags &= ~(IEEE80211_STA_BEACON_POLL |
 					IEEE80211_STA_CONNECTION_POLL);
 
 		/* let's probe the connection once */
-		ieee80211_queue_work(&sdata->local->hw,
-			   &sdata->u.mgd.monitor_work);
+		flags = sdata->local->hw.flags;
+		if (!(flags & IEEE80211_HW_CONNECTION_MONITOR))
+			ieee80211_queue_work(&sdata->local->hw,
+					     &sdata->u.mgd.monitor_work);
 		/* and do all the other regular work too */
 		ieee80211_queue_work(&sdata->local->hw, &sdata->work);
 	}
@@ -2616,7 +2619,6 @@ int ieee80211_mgd_deauth(struct ieee80211_sub_if_data *sdata,
 {
 	struct ieee80211_local *local = sdata->local;
 	struct ieee80211_if_managed *ifmgd = &sdata->u.mgd;
-	struct ieee80211_work *wk;
 	u8 bssid[ETH_ALEN];
 	bool assoc_bss = false;
 
@@ -2629,29 +2631,36 @@ int ieee80211_mgd_deauth(struct ieee80211_sub_if_data *sdata,
 		assoc_bss = true;
 	} else {
 		bool not_auth_yet = false;
+		struct ieee80211_work *tmp, *wk = NULL;
 
 		mutex_unlock(&ifmgd->mtx);
 
 		mutex_lock(&local->mtx);
-		list_for_each_entry(wk, &local->work_list, list) {
-			if (wk->sdata != sdata)
+		list_for_each_entry(tmp, &local->work_list, list) {
+			if (tmp->sdata != sdata)
 				continue;
 
-			if (wk->type != IEEE80211_WORK_DIRECT_PROBE &&
-			    wk->type != IEEE80211_WORK_AUTH &&
-			    wk->type != IEEE80211_WORK_ASSOC &&
-			    wk->type != IEEE80211_WORK_ASSOC_BEACON_WAIT)
+			if (tmp->type != IEEE80211_WORK_DIRECT_PROBE &&
+			    tmp->type != IEEE80211_WORK_AUTH &&
+			    tmp->type != IEEE80211_WORK_ASSOC &&
+			    tmp->type != IEEE80211_WORK_ASSOC_BEACON_WAIT)
 				continue;
 
-			if (memcmp(req->bss->bssid, wk->filter_ta, ETH_ALEN))
+			if (memcmp(req->bss->bssid, tmp->filter_ta, ETH_ALEN))
 				continue;
 
-			not_auth_yet = wk->type == IEEE80211_WORK_DIRECT_PROBE;
-			list_del_rcu(&wk->list);
-			free_work(wk);
+			not_auth_yet = tmp->type == IEEE80211_WORK_DIRECT_PROBE;
+			list_del_rcu(&tmp->list);
+			synchronize_rcu();
+			wk = tmp;
 			break;
 		}
 		mutex_unlock(&local->mtx);
+
+		if (wk && wk->type == IEEE80211_WORK_ASSOC)
+			/* clean up dummy sta & TX sync */
+			sta_info_destroy_addr(wk->sdata, wk->filter_ta);
+		kfree(wk);
 
 		/*
 		 * If somebody requests authentication and we haven't

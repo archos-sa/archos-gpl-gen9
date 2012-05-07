@@ -382,6 +382,7 @@ enum wl12xx_flags {
 	WL1271_FLAG_RECOVERY_IN_PROGRESS,
 	WL1271_FLAG_CS_PROGRESS,
 	WL1271_FLAG_PROBE_RESP_SET,
+	WL1271_FLAG_HW_GOING_DOWN,
 };
 
 struct wl1271_link {
@@ -727,6 +728,7 @@ struct wl1271 {
 
 struct wl1271_station {
 	bool added;
+	bool authorized;
 	u8 hlid;
 };
 

@@ -229,7 +229,7 @@ static struct conf_drv_settings default_conf = {
 				.rule        = CONF_BCN_RULE_PASS_ON_CHANGE,
 			},
 		},
-		.synch_fail_thold            = 10,
+		.synch_fail_thold            = 30,
 		.bss_lose_timeout            = 100,
 		.beacon_rx_timeout           = 10000,
 		.broadcast_timeout           = 20000,
@@ -1535,13 +1535,16 @@ static int __wl1271_plt_stop(struct wl1271 *wl)
 		goto out;
 	}
 
+	mutex_unlock(&wl->mutex);
+	wl1271_disable_interrupts(wl);
+	mutex_lock(&wl->mutex);
+
 	wl1271_power_off(wl);
 
 	wl->state = WL1271_STATE_OFF;
 	wl->rx_counter = 0;
 
 	mutex_unlock(&wl->mutex);
-	wl1271_disable_interrupts(wl);
 	wl1271_flush_deferred_work(wl);
 	cancel_work_sync(&wl->netstack_work);
 	cancel_work_sync(&wl->recovery_work);
@@ -1889,18 +1892,17 @@ static int wl1271_configure_suspend_sta(struct wl1271 *wl,
 
 		ret = wait_for_completion_timeout(
 			&compl, msecs_to_jiffies(WL1271_PS_COMPLETE_TIMEOUT));
+
+		mutex_lock(&wl->mutex);
 		if (ret <= 0) {
 			wl1271_warning("couldn't enter ps mode!");
 			ret = -EBUSY;
-			goto out;
+			goto out_cleanup;
 		}
-
-		/* take mutex again, and wakeup */
-		mutex_lock(&wl->mutex);
 
 		ret = wl1271_ps_elp_wakeup(wl);
 		if (ret < 0)
-			goto out_unlock;
+			goto out_cleanup;
 	}
 
 	ret = wl1271_configure_wowlan(wl, wow);
@@ -1919,9 +1921,10 @@ static int wl1271_configure_suspend_sta(struct wl1271 *wl,
 
 out_sleep:
 	wl1271_ps_elp_sleep(wl);
+out_cleanup:
+	wl->ps_compl = NULL;
 out_unlock:
 	mutex_unlock(&wl->mutex);
-out:
 	return ret;
 }
 
@@ -2272,6 +2275,11 @@ static void __wl1271_op_remove_interface(struct wl1271 *wl,
 	if (wl->state != WL1271_STATE_ON)
 		return;
 
+	/* Protect from re-entry that can happen if recovery is triggered while
+	   this op is running */
+	if (test_and_set_bit(WL1271_FLAG_HW_GOING_DOWN, &wl->flags))
+		return;
+
 	wl1271_info("down");
 
 	mutex_lock(&wl_list_mutex);
@@ -2317,11 +2325,19 @@ static void __wl1271_op_remove_interface(struct wl1271 *wl,
 	 * this must be before the cancel_work calls below, so that the work
 	 * functions don't perform further work.
 	 */
-	wl->state = WL1271_STATE_OFF;
-
 	mutex_unlock(&wl->mutex);
 
+	/*
+	 * Interrupts must be disabled before setting the state to OFF.
+	 * Otherwise, the interrupt handler might be called and exit without
+	 * reading the interrupt status.
+	 */
 	wl1271_disable_interrupts(wl);
+
+	mutex_lock(&wl->mutex);
+	wl->state = WL1271_STATE_OFF;
+	mutex_unlock(&wl->mutex);
+
 	wl1271_flush_deferred_work(wl);
 	cancel_delayed_work_sync(&wl->scan_complete_work);
 	cancel_work_sync(&wl->netstack_work);
@@ -2590,7 +2606,7 @@ static int wl1271_op_config(struct ieee80211_hw *hw, u32 changed)
 	struct wl1271 *wl = hw->priv;
 	struct ieee80211_conf *conf = &hw->conf;
 	int channel, ret = 0;
-	bool is_ap;
+	bool is_ap, is_sta;
 
 	channel = ieee80211_frequency_to_channel(conf->channel->center_freq);
 
@@ -2627,6 +2643,7 @@ static int wl1271_op_config(struct ieee80211_hw *hw, u32 changed)
 	}
 
 	is_ap = (wl->bss_type == BSS_TYPE_AP_BSS);
+	is_sta = (wl->bss_type == BSS_TYPE_STA_BSS);
 
 	ret = wl1271_ps_elp_wakeup(wl);
 	if (ret < 0)
@@ -2690,7 +2707,7 @@ static int wl1271_op_config(struct ieee80211_hw *hw, u32 changed)
 		}
 	}
 
-	if (changed & IEEE80211_CONF_CHANGE_IDLE && !is_ap) {
+	if (changed & IEEE80211_CONF_CHANGE_IDLE && is_sta) {
 		ret = wl1271_sta_handle_idle(wl,
 					conf->flags & IEEE80211_CONF_IDLE);
 		if (ret < 0)
@@ -3149,10 +3166,12 @@ static int wl1271_op_set_key(struct ieee80211_hw *hw, enum set_key_cmd cmd,
 			goto out_sleep;
 		}
 
-		/* reconfiguring arp response if the unicast encryption
-		 * type was changed
-		*/
-		if (sta && wl->bss_type == BSS_TYPE_STA_BSS &&
+		/*
+		 * reconfiguring arp response if the unicast (or common)
+		 * encryption key type was changed
+		 */
+		if (wl->bss_type == BSS_TYPE_STA_BSS &&
+		    (sta || key_type == KEY_WEP) &&
 		    wl->encryption_type != key_type) {
 			wl->encryption_type = key_type;
 			ret = wl1271_cmd_build_arp_rsp(wl, wl->ip_addr);
@@ -3289,6 +3308,11 @@ static int wl1271_op_sched_scan_start(struct ieee80211_hw *hw,
 
 	mutex_lock(&wl->mutex);
 
+	if (wl->state == WL1271_STATE_OFF) {
+		ret = -EAGAIN;
+		goto out;
+	}
+
 	ret = wl1271_ps_elp_wakeup(wl);
 	if (ret < 0)
 		goto out;
@@ -3319,6 +3343,9 @@ static void wl1271_op_sched_scan_stop(struct ieee80211_hw *hw,
 	wl1271_debug(DEBUG_MAC80211, "wl1271_op_sched_scan_stop");
 
 	mutex_lock(&wl->mutex);
+
+	if (wl->state == WL1271_STATE_OFF)
+		goto out;
 
 	ret = wl1271_ps_elp_wakeup(wl);
 	if (ret < 0)
@@ -3847,11 +3874,8 @@ static void wl1271_bss_info_changed_sta(struct wl1271 *wl,
 			ibss_joined = true;
 		} else {
 			if (test_and_clear_bit(WL1271_FLAG_IBSS_JOINED,
-					       &wl->flags)) {
+					       &wl->flags))
 				wl1271_unjoin(wl);
-				wl1271_cmd_role_start_dev(wl);
-				wl1271_roc(wl, wl->dev_role_id);
-			}
 		}
 	}
 
@@ -4376,6 +4400,23 @@ void wl1271_free_sta(struct wl1271 *wl, u8 hlid)
 	wl->active_sta_count--;
 }
 
+static int wl12xx_sta_authorize(struct wl1271 *wl,
+				struct ieee80211_sta *sta)
+{
+	struct wl1271_station *wl_sta;
+	int ret;
+
+	wl_sta = (struct wl1271_station *)sta->drv_priv;
+	if (wl_sta->authorized)
+		return -EALREADY;
+
+	ret = wl1271_acx_set_ht_capabilities(wl, &sta->ht_cap, true,
+					     wl_sta->hlid);
+	wl_sta->authorized = true;
+
+	return ret;
+}
+
 static int wl1271_op_sta_add_locked(struct ieee80211_hw *hw,
 				    struct ieee80211_vif *vif,
 				    struct ieee80211_sta *sta)
@@ -4396,9 +4437,11 @@ static int wl1271_op_sta_add_locked(struct ieee80211_hw *hw,
 	if (ret < 0)
 		goto out;
 
-	ret = wl1271_acx_set_ht_capabilities(wl, &sta->ht_cap, true, hlid);
-	if (ret < 0)
-		goto out;
+	if (sta->authorized) {
+		ret = wl12xx_sta_authorize(wl, sta);
+		if (ret < 0)
+			goto out;
+	}
 
 	wl_sta = (struct wl1271_station *)sta->drv_priv;
 	wl_sta->added = true;
@@ -4409,6 +4452,27 @@ out:
 	return ret;
 }
 
+static void wl12xx_op_sta_authorize(struct ieee80211_hw *hw,
+				    struct ieee80211_vif *vif,
+				    struct ieee80211_sta *sta)
+{
+	struct wl1271 *wl = hw->priv;
+	int ret;
+
+	wl1271_debug(DEBUG_MAC80211, "mac80211 auth sta %d", (int)sta->aid);
+	mutex_lock(&wl->mutex);
+
+	ret = wl1271_ps_elp_wakeup(wl);
+	if (ret < 0)
+		goto out;
+
+	ret = wl12xx_sta_authorize(wl, sta);
+
+	wl1271_ps_elp_sleep(wl);
+out:
+	mutex_unlock(&wl->mutex);
+
+}
 static int wl1271_op_sta_add(struct ieee80211_hw *hw,
 			     struct ieee80211_vif *vif,
 			     struct ieee80211_sta *sta)
@@ -4928,6 +4992,7 @@ static const struct ieee80211_ops wl1271_ops = {
 	.get_survey = wl1271_op_get_survey,
 	.sta_add = wl1271_op_sta_add,
 	.sta_remove = wl1271_op_sta_remove,
+	.sta_authorize = wl12xx_op_sta_authorize,
 	.ampdu_action = wl1271_op_ampdu_action,
 	.tx_frames_pending = wl1271_tx_frames_pending,
 	.channel_switch = wl12xx_op_channel_switch,

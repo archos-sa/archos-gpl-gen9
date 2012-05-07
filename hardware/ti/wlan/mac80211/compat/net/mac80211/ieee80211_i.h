@@ -53,11 +53,18 @@ struct ieee80211_local;
 
 #define TU_TO_EXP_TIME(x)	(jiffies + usecs_to_jiffies((x) * 1024))
 
+#if 0
+// fails on Fritzbox 7390
 #define IEEE80211_DEFAULT_UAPSD_QUEUES \
 	(IEEE80211_WMM_IE_STA_QOSINFO_AC_BK |	\
 	 IEEE80211_WMM_IE_STA_QOSINFO_AC_BE |	\
 	 IEEE80211_WMM_IE_STA_QOSINFO_AC_VI |	\
 	 IEEE80211_WMM_IE_STA_QOSINFO_AC_VO)
+#else
+// same power save delivery protocol configuration as on Honeycomb
+#define IEEE80211_DEFAULT_UAPSD_QUEUES \
+	 IEEE80211_WMM_IE_STA_QOSINFO_AC_VO
+#endif
 
 #define IEEE80211_DEFAULT_MAX_SP_LEN		\
 	IEEE80211_WMM_IE_STA_QOSINFO_SP_ALL
