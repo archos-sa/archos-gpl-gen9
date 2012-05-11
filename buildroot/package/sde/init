@@ -1,0 +1,54 @@
+#!/bin/sh
+
+BOOT_IMAGE_BASE="/SDE"
+
+CAT=/bin/cat
+ZCAT=/bin/zcat
+MOUNT=/bin/mount
+
+enable_backlight()
+{
+	if [ -e /sys/class/leds/lcd-backlight/brightness ] ; then
+		echo 64 > /sys/class/leds/lcd-backlight/brightness
+	fi
+}
+
+# Prepare filesystem
+$MOUNT -t proc proc /proc
+$MOUNT -t usbfs none /proc/bus/usb
+$MOUNT -t sysfs sysfs /sys
+$MOUNT -t debugfs none /sys/kernel/debug
+$MOUNT -t devtmpfs devtmpfs /dev
+
+mkdir -p /dev/pts
+mkdir -p /dev/shm
+mkdir -p /dev/misc
+
+$MOUNT -t devpts devpts /dev/pts
+
+# Get board and product information
+PRODUCT_NAME=`$CAT /proc/cpuinfo | grep "Hardware" | cut -d ' ' -f 3`
+
+# Show a nice boot image
+case "$PRODUCT_NAME" in
+    A80S)
+        BOOT_IMAGE=$BOOT_IMAGE_BASE-1024x768.gz
+        ;;
+    A80H)
+        BOOT_IMAGE=$BOOT_IMAGE_BASE-1024x768.gz
+        ;;
+    A101S)
+        BOOT_IMAGE=$BOOT_IMAGE_BASE-1280x800.gz
+        ;;
+    A101H)
+        BOOT_IMAGE=$BOOT_IMAGE_BASE-1280x800.gz
+        ;;
+esac
+$ZCAT $BOOT_IMAGE > /dev/fb0
+
+# Enabling LCD
+enable_backlight
+
+sleep 10
+
+reboot
