@@ -30,17 +30,17 @@ pb_zzzz3333zzzzbbbb: db -1,-1,-1,-1,3,3,3,3,-1,-1,-1,-1,11,11,11,11
 pb_zz11zz55zz99zzdd: db -1,-1,1,1,-1,-1,5,5,-1,-1,9,9,-1,-1,13,13
 pb_revwords: db 14, 15, 12, 13, 10, 11, 8, 9, 6, 7, 4, 5, 2, 3, 0, 1
 pd_16384: times 4 dd 16384
+pb_bswap32: db 3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12
 
 SECTION_TEXT
 
 %macro SCALARPRODUCT 1
-; int scalarproduct_int16(int16_t *v1, int16_t *v2, int order, int shift)
-cglobal scalarproduct_int16_%1, 3,3,4, v1, v2, order, shift
+; int scalarproduct_int16(int16_t *v1, int16_t *v2, int order)
+cglobal scalarproduct_int16_%1, 3,3,3, v1, v2, order
     shl orderq, 1
     add v1q, orderq
     add v2q, orderq
     neg orderq
-    movd    m3, shiftm
     pxor    m2, m2
 .loop:
     movu    m0, [v1q + orderq]
@@ -54,10 +54,8 @@ cglobal scalarproduct_int16_%1, 3,3,4, v1, v2, order, shift
 %if mmsize == 16
     movhlps m0, m2
     paddd   m2, m0
-    psrad   m2, m3
     pshuflw m0, m2, 0x4e
 %else
-    psrad   m2, m3
     pshufw  m0, m2, 0x4e
 %endif
     paddd   m2, m0
@@ -475,7 +473,7 @@ cglobal scalarproduct_float_sse, 3,3,2, v1, v2, offset
     shufps  xmm0, xmm0, 1
     addss   xmm0, xmm1
 %if ARCH_X86_64 == 0
-    movd    r0m,  xmm0
+    movss   r0m,  xmm0
     fld     dword r0m
 %endif
     RET
@@ -499,9 +497,9 @@ cglobal scalarproduct_float_sse, 3,3,2, v1, v2, offset
 
 %macro EMU_EDGE_FUNC 0
 %if ARCH_X86_64
-%define w_reg r10
-cglobal emu_edge_core, 6, 7, 1
-    mov        r11, r5          ; save block_h
+%define w_reg r7
+cglobal emu_edge_core, 6, 9, 1
+    mov         r8, r5          ; save block_h
 %else
 %define w_reg r6
 cglobal emu_edge_core, 2, 7, 0
@@ -538,7 +536,7 @@ cglobal emu_edge_core, 2, 7, 0
     sub         r0, w_reg
 %if ARCH_X86_64
     mov         r3, r0          ; backup of buf+block_h*linesize
-    mov         r5, r11
+    mov         r5, r8
 %else
     mov        r0m, r0          ; backup of buf+block_h*linesize
     mov         r5, r5m
@@ -552,7 +550,7 @@ cglobal emu_edge_core, 2, 7, 0
     ; FIXME we can do a if size == 1 here if that makes any speed difference, test me
     sar      w_reg, 1
     sal      w_reg, 6
-    ; r0=buf+block_h*linesize,r10(64)/r6(32)=start_x offset for funcs
+    ; r0=buf+block_h*linesize,r7(64)/r6(32)=start_x offset for funcs
     ; r6(rax)/r3(ebx)=val,r2=linesize,r1=start_x,r5=block_h
 %ifdef PIC
     lea        rax, [.emuedge_extend_left_2]
@@ -562,7 +560,7 @@ cglobal emu_edge_core, 2, 7, 0
 %endif
     call     w_reg
 
-    ; now r3(64)/r0(32)=buf,r2=linesize,r11/r5=block_h,r6/r3=val, r10/r6=end_x, r1=block_w
+    ; now r3(64)/r0(32)=buf,r2=linesize,r8/r5=block_h,r6/r3=val, r7/r6=end_x, r1=block_w
 .right_extend:
 %if ARCH_X86_32
     mov         r0, r0m
@@ -593,10 +591,10 @@ cglobal emu_edge_core, 2, 7, 0
 %define vall  al
 %define valh  ah
 %define valw  ax
-%define valw2 r10w
+%define valw2 r7w
 %define valw3 r3w
 %if WIN64
-%define valw4 r4w
+%define valw4 r7w
 %else ; unix64
 %define valw4 r3w
 %endif
@@ -620,7 +618,7 @@ cglobal emu_edge_core, 2, 7, 0
 ;            - else if (%2 & 8)  fills 8 bytes into mm0
 ;            - if (%2 & 7 == 4)  fills the last 4 bytes into rax
 ;            - else if (%2 & 4)  fills 4 bytes into mm0-1
-;            - if (%2 & 3 == 3)  fills 2 bytes into r10/r3, and 1 into eax
+;            - if (%2 & 3 == 3)  fills 2 bytes into r7/r3, and 1 into eax
 ;              (note that we're using r3 for body/bottom because it's a shorter
 ;               opcode, and then the loop fits in 128 bytes)
 ;            - else              fills remaining bytes into rax
@@ -850,7 +848,7 @@ ALIGN 64
 %endrep
 %endmacro ; LEFT_EXTEND
 
-; r3/r0=buf+block_h*linesize, r2=linesize, r11/r5=block_h, r0/r6=end_x, r6/r3=val
+; r3/r0=buf+block_h*linesize, r2=linesize, r8/r5=block_h, r0/r6=end_x, r6/r3=val
 %macro RIGHT_EXTEND 0
 %assign %%n 2
 %rep 11
@@ -860,7 +858,7 @@ ALIGN 64
     sub        r3, r2                   ;   dst -= linesize
     READ_V_PIXEL  %%n, [r3+w_reg-1]     ;   read pixels
     WRITE_V_PIXEL %%n, r3+r4-%%n        ;   write pixels
-    dec       r11
+    dec       r8
 %else ; ARCH_X86_32
     sub        r0, r2                   ;   dst -= linesize
     READ_V_PIXEL  %%n, [r0+w_reg-1]     ;   read pixels
@@ -939,11 +937,11 @@ ALIGN 64
 %macro SLOW_V_EXTEND 0
 .slow_v_extend_loop:
 ; r0=buf,r1=src,r2(64)/r2m(32)=linesize,r3(64)/r3m(32)=start_x,r4=end_y,r5=block_h
-; r11(64)/r3(later-64)/r2(32)=cnt_reg,r6(64)/r3(32)=val_reg,r10(64)/r6(32)=w=end_x-start_x
+; r8(64)/r3(later-64)/r2(32)=cnt_reg,r6(64)/r3(32)=val_reg,r7(64)/r6(32)=w=end_x-start_x
 %if ARCH_X86_64
-    push       r11              ; save old value of block_h
+    push        r8              ; save old value of block_h
     test        r3, r3
-%define cnt_reg r11
+%define cnt_reg r8
     jz .do_body_copy            ; if (!start_y) goto do_body_copy
     V_COPY_ROW top, r3
 %else
@@ -957,7 +955,7 @@ ALIGN 64
     V_COPY_ROW body, r4
 
 %if ARCH_X86_64
-    pop        r11              ; restore old value of block_h
+    pop         r8              ; restore old value of block_h
 %define cnt_reg r3
 %endif
     test        r5, r5
@@ -976,7 +974,7 @@ ALIGN 64
 
 %macro SLOW_LEFT_EXTEND 0
 .slow_left_extend_loop:
-; r0=buf+block_h*linesize,r2=linesize,r6(64)/r3(32)=val,r5=block_h,r4=cntr,r10/r6=start_x
+; r0=buf+block_h*linesize,r2=linesize,r6(64)/r3(32)=val,r5=block_h,r4=cntr,r7/r6=start_x
     mov         r4, 8
     sub         r0, linesize
     READ_V_PIXEL 8, [r0+w_reg]
@@ -1004,11 +1002,11 @@ ALIGN 64
 
 %macro SLOW_RIGHT_EXTEND 0
 .slow_right_extend_loop:
-; r3(64)/r0(32)=buf+block_h*linesize,r2=linesize,r4=block_w,r11(64)/r5(32)=block_h,
-; r10(64)/r6(32)=end_x,r6/r3=val,r1=cntr
+; r3(64)/r0(32)=buf+block_h*linesize,r2=linesize,r4=block_w,r8(64)/r5(32)=block_h,
+; r7(64)/r6(32)=end_x,r6/r3=val,r1=cntr
 %if ARCH_X86_64
 %define buf_reg r3
-%define bh_reg r11
+%define bh_reg r8
 %else
 %define buf_reg r0
 %define bh_reg r5
@@ -1062,7 +1060,7 @@ emu_edge mmx
 ; %4 = CLIPD function takes min/max as float instead of int (CLIPD_SSE2)
 ; %5 = suffix
 %macro VECTOR_CLIP_INT32 4-5
-cglobal vector_clip_int32%5, 5,5,%2, dst, src, min, max, len
+cglobal vector_clip_int32%5, 5,5,%1, dst, src, min, max, len
 %if %4
     cvtsi2ss  m4, minm
     cvtsi2ss  m5, maxm
@@ -1132,6 +1130,117 @@ VECTOR_CLIP_INT32 6, 1, 0, 0
 %endif
 
 ;-----------------------------------------------------------------------------
+; void vector_fmul(float *dst, const float *src0, const float *src1, int len)
+;-----------------------------------------------------------------------------
+%macro VECTOR_FMUL 0
+cglobal vector_fmul, 4,4,2, dst, src0, src1, len
+    lea       lenq, [lend*4 - 2*mmsize]
+ALIGN 16
+.loop
+    mova      m0,   [src0q + lenq]
+    mova      m1,   [src0q + lenq + mmsize]
+    mulps     m0, m0, [src1q + lenq]
+    mulps     m1, m1, [src1q + lenq + mmsize]
+    mova      [dstq + lenq], m0
+    mova      [dstq + lenq + mmsize], m1
+
+    sub       lenq, 2*mmsize
+    jge       .loop
+%if mmsize == 32
+    vzeroupper
+    RET
+%else
+    REP_RET
+%endif
+%endmacro
+
+INIT_XMM sse
+VECTOR_FMUL
+%if HAVE_AVX
+INIT_YMM avx
+VECTOR_FMUL
+%endif
+
+;-----------------------------------------------------------------------------
+; void vector_fmul_reverse(float *dst, const float *src0, const float *src1,
+;                          int len)
+;-----------------------------------------------------------------------------
+%macro VECTOR_FMUL_REVERSE 0
+cglobal vector_fmul_reverse, 4,4,2, dst, src0, src1, len
+    lea       lenq, [lend*4 - 2*mmsize]
+ALIGN 16
+.loop
+%if cpuflag(avx)
+    vmovaps     xmm0, [src1q + 16]
+    vinsertf128 m0, m0, [src1q], 1
+    vshufps     m0, m0, m0, q0123
+    vmovaps     xmm1, [src1q + mmsize + 16]
+    vinsertf128 m1, m1, [src1q + mmsize], 1
+    vshufps     m1, m1, m1, q0123
+%else
+    mova    m0, [src1q]
+    mova    m1, [src1q + mmsize]
+    shufps  m0, m0, q0123
+    shufps  m1, m1, q0123
+%endif
+    mulps   m0, m0, [src0q + lenq + mmsize]
+    mulps   m1, m1, [src0q + lenq]
+    mova    [dstq + lenq + mmsize], m0
+    mova    [dstq + lenq], m1
+    add     src1q, 2*mmsize
+    sub     lenq,  2*mmsize
+    jge     .loop
+%if mmsize == 32
+    vzeroupper
+    RET
+%else
+    REP_RET
+%endif
+%endmacro
+
+INIT_XMM sse
+VECTOR_FMUL_REVERSE
+%if HAVE_AVX
+INIT_YMM avx
+VECTOR_FMUL_REVERSE
+%endif
+
+;-----------------------------------------------------------------------------
+; vector_fmul_add(float *dst, const float *src0, const float *src1,
+;                 const float *src2, int len)
+;-----------------------------------------------------------------------------
+%macro VECTOR_FMUL_ADD 0
+cglobal vector_fmul_add, 5,5,2, dst, src0, src1, src2, len
+    lea       lenq, [lend*4 - 2*mmsize]
+ALIGN 16
+.loop
+    mova    m0,   [src0q + lenq]
+    mova    m1,   [src0q + lenq + mmsize]
+    mulps   m0, m0, [src1q + lenq]
+    mulps   m1, m1, [src1q + lenq + mmsize]
+    addps   m0, m0, [src2q + lenq]
+    addps   m1, m1, [src2q + lenq + mmsize]
+    mova    [dstq + lenq], m0
+    mova    [dstq + lenq + mmsize], m1
+
+    sub     lenq,   2*mmsize
+    jge     .loop
+%if mmsize == 32
+    vzeroupper
+    RET
+%else
+    REP_RET
+%endif
+%endmacro
+
+INIT_XMM sse
+VECTOR_FMUL_ADD
+%if HAVE_AVX
+INIT_YMM avx
+VECTOR_FMUL_ADD
+%endif
+
+;-----------------------------------------------------------------------------
 ; void ff_butterflies_float_interleave(float *dst, const float *src0,
 ;                                      const float *src1, int len);
 ;-----------------------------------------------------------------------------
@@ -1176,5 +1285,129 @@ cglobal butterflies_float_interleave, 4,4,3, dst, src0, src1, len
 
 INIT_XMM sse
 BUTTERFLIES_FLOAT_INTERLEAVE
+%if HAVE_AVX
 INIT_YMM avx
 BUTTERFLIES_FLOAT_INTERLEAVE
+%endif
+
+INIT_XMM sse2
+; %1 = aligned/unaligned
+%macro BSWAP_LOOPS_SSE2  1
+    mov      r3, r2
+    sar      r2, 3
+    jz       .left4_%1
+.loop8_%1:
+    mov%1    m0, [r1 +  0]
+    mov%1    m1, [r1 + 16]
+    pshuflw  m0, m0, 10110001b
+    pshuflw  m1, m1, 10110001b
+    pshufhw  m0, m0, 10110001b
+    pshufhw  m1, m1, 10110001b
+    mova     m2, m0
+    mova     m3, m1
+    psllw    m0, 8
+    psllw    m1, 8
+    psrlw    m2, 8
+    psrlw    m3, 8
+    por      m2, m0
+    por      m3, m1
+    mova     [r0 +  0], m2
+    mova     [r0 + 16], m3
+    add      r1, 32
+    add      r0, 32
+    dec      r2
+    jnz      .loop8_%1
+.left4_%1:
+    mov      r2, r3
+    and      r3, 4
+    jz       .left
+    mov%1    m0, [r1]
+    pshuflw  m0, m0, 10110001b
+    pshufhw  m0, m0, 10110001b
+    mova     m2, m0
+    psllw    m0, 8
+    psrlw    m2, 8
+    por      m2, m0
+    mova     [r0], m2
+    add      r1, 16
+    add      r0, 16
+%endmacro
+
+; void bswap_buf(uint32_t *dst, const uint32_t *src, int w);
+cglobal bswap32_buf, 3,4,5
+    mov      r3, r1
+    and      r3, 15
+    jz       .start_align
+    BSWAP_LOOPS_SSE2  u
+    jmp      .left
+.start_align:
+    BSWAP_LOOPS_SSE2  a
+.left:
+    and      r2, 3
+    jz       .end
+.loop2:
+    mov      r3d, [r1]
+    bswap    r3d
+    mov      [r0], r3d
+    add      r1, 4
+    add      r0, 4
+    dec      r2
+    jnz      .loop2
+.end
+    RET
+
+; %1 = aligned/unaligned
+%macro BSWAP_LOOPS_SSSE3  1
+    mov      r3, r2
+    sar      r2, 3
+    jz       .left4_%1
+.loop8_%1:
+    mov%1    m0, [r1 +  0]
+    mov%1    m1, [r1 + 16]
+    pshufb   m0, m2
+    pshufb   m1, m2
+    mova     [r0 +  0], m0
+    mova     [r0 + 16], m1
+    add      r0, 32
+    add      r1, 32
+    dec      r2
+    jnz      .loop8_%1
+.left4_%1:
+    mov      r2, r3
+    and      r3, 4
+    jz       .left2
+    mov%1    m0, [r1]
+    pshufb   m0, m2
+    mova     [r0], m0
+    add      r1, 16
+    add      r0, 16
+%endmacro
+
+INIT_XMM ssse3
+; void bswap_buf(uint32_t *dst, const uint32_t *src, int w);
+cglobal bswap32_buf, 3,4,3
+    mov      r3, r1
+    mova     m2, [pb_bswap32]
+    and      r3, 15
+    jz       .start_align
+    BSWAP_LOOPS_SSSE3  u
+    jmp      .left2
+.start_align:
+    BSWAP_LOOPS_SSSE3  a
+.left2:
+    mov      r3, r2
+    and      r2, 2
+    jz       .left1
+    movq     m0, [r1]
+    pshufb   m0, m2
+    movq     [r0], m0
+    add      r1, 8
+    add      r0, 8
+.left1:
+    and      r3, 1
+    jz       .end
+    mov      r2d, [r1]
+    bswap    r2d
+    mov      [r0], r2d
+.end:
+    RET

@@ -28,6 +28,8 @@
 #include "libavutil/pixdesc.h"
 #include "libavutil/parseutils.h"
 #include "avfilter.h"
+#include "formats.h"
+#include "video.h"
 
 enum { Y, U, V, A };
 
@@ -70,7 +72,7 @@ static int query_formats(AVFilterContext *ctx)
         PIX_FMT_NONE
     };
 
-    avfilter_set_common_formats(ctx, avfilter_make_format_list(pix_fmts));
+    ff_set_common_formats(ctx, ff_make_format_list(pix_fmts));
     return 0;
 }
 
@@ -117,7 +119,7 @@ static void draw_slice(AVFilterLink *inlink, int y0, int h, int slice_dir)
         }
     }
 
-    avfilter_draw_slice(inlink->dst->outputs[0], y0, h, 1);
+    ff_draw_slice(inlink->dst->outputs[0], y0, h, 1);
 }
 
 AVFilter avfilter_vf_drawbox = {
@@ -130,10 +132,10 @@ AVFilter avfilter_vf_drawbox = {
     .inputs    = (AVFilterPad[]) {{ .name             = "default",
                                     .type             = AVMEDIA_TYPE_VIDEO,
                                     .config_props     = config_input,
-                                    .get_video_buffer = avfilter_null_get_video_buffer,
-                                    .start_frame      = avfilter_null_start_frame,
+                                    .get_video_buffer = ff_null_get_video_buffer,
+                                    .start_frame      = ff_null_start_frame,
                                     .draw_slice       = draw_slice,
-                                    .end_frame        = avfilter_null_end_frame,
+                                    .end_frame        = ff_null_end_frame,
                                     .min_perms        = AV_PERM_WRITE | AV_PERM_READ,
                                     .rej_perms        = AV_PERM_PRESERVE },
                                   { .name = NULL}},

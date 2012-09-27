@@ -21,6 +21,7 @@
 #include "libavformat/avformat.h"
 #include "libavutil/pixdesc.h"
 #include "libavfilter/avfilter.h"
+#include "libavfilter/formats.h"
 
 int main(int argc, char **argv)
 {
@@ -50,7 +51,7 @@ int main(int argc, char **argv)
     }
 
     if (avfilter_open(&filter_ctx, filter, NULL) < 0) {
-        fprintf(stderr, "Inpossible to open filter with name '%s'\n",
+        fprintf(stderr, "Impossible to open filter with name '%s'\n",
                 filter_name);
         return 1;
     }
@@ -75,7 +76,7 @@ int main(int argc, char **argv)
     if (filter->query_formats)
         filter->query_formats(filter_ctx);
     else
-        avfilter_default_query_formats(filter_ctx);
+        ff_default_query_formats(filter_ctx);
 
     /* print the supported formats in input */
     for (i = 0; i < filter_ctx->input_count; i++) {

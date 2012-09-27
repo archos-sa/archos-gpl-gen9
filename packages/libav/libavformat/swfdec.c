@@ -84,7 +84,7 @@ static int swf_read_packet(AVFormatContext *s, AVPacket *pkt)
     SWFContext *swf = s->priv_data;
     AVIOContext *pb = s->pb;
     AVStream *vst = NULL, *ast = NULL, *st = 0;
-    int tag, len, i, frame, v;
+    int tag, len, i, frame, v, res;
 
     for(;;) {
         uint64_t pos = avio_tell(pb);
@@ -113,7 +113,6 @@ static int swf_read_packet(AVFormatContext *s, AVPacket *pkt)
             vst->codec->codec_type = AVMEDIA_TYPE_VIDEO;
             vst->codec->codec_id = ff_codec_get_id(swf_codec_tags, avio_r8(pb));
             avpriv_set_pts_info(vst, 16, 256, swf->frame_rate);
-            vst->codec->time_base = (AVRational){ 256, swf->frame_rate };
             len -= 8;
         } else if (tag == TAG_STREAMHEAD || tag == TAG_STREAMHEAD2) {
             /* streaming found */
@@ -137,10 +136,7 @@ static int swf_read_packet(AVFormatContext *s, AVPacket *pkt)
             ast->codec->codec_id = ff_codec_get_id(swf_audio_codec_tags, (v>>4) & 15);
             ast->need_parsing = AVSTREAM_PARSE_FULL;
             sample_rate_code= (v>>2) & 3;
-            if (!sample_rate_code)
-                ast->codec->sample_rate = 5512;
-            else
-                ast->codec->sample_rate = 11025 << (sample_rate_code-1);
+            ast->codec->sample_rate = 44100 >> (3 - sample_rate_code);
             avpriv_set_pts_info(ast, 64, 1, ast->codec->sample_rate);
             len -= 4;
         } else if (tag == TAG_VIDEOFRAME) {
@@ -150,7 +146,8 @@ static int swf_read_packet(AVFormatContext *s, AVPacket *pkt)
                 st = s->streams[i];
                 if (st->codec->codec_type == AVMEDIA_TYPE_VIDEO && st->id == ch_id) {
                     frame = avio_rl16(pb);
-                    av_get_packet(pb, pkt, len-2);
+                    if ((res = av_get_packet(pb, pkt, len-2)) < 0)
+                        return res;
                     pkt->pos = pos;
                     pkt->pts = frame;
                     pkt->stream_index = st->index;
@@ -163,9 +160,11 @@ static int swf_read_packet(AVFormatContext *s, AVPacket *pkt)
                 if (st->codec->codec_type == AVMEDIA_TYPE_AUDIO && st->id == -1) {
             if (st->codec->codec_id == CODEC_ID_MP3) {
                 avio_skip(pb, 4);
-                av_get_packet(pb, pkt, len-4);
+                if ((res = av_get_packet(pb, pkt, len-4)) < 0)
+                    return res;
             } else { // ADPCM, PCM
-                av_get_packet(pb, pkt, len);
+                if ((res = av_get_packet(pb, pkt, len)) < 0)
+                    return res;
             }
             pkt->pos = pos;
             pkt->stream_index = st->index;
@@ -186,11 +185,11 @@ static int swf_read_packet(AVFormatContext *s, AVPacket *pkt)
                 vst->codec->codec_type = AVMEDIA_TYPE_VIDEO;
                 vst->codec->codec_id = CODEC_ID_MJPEG;
                 avpriv_set_pts_info(vst, 64, 256, swf->frame_rate);
-                vst->codec->time_base = (AVRational){ 256, swf->frame_rate };
                 st = vst;
             }
             avio_rl16(pb); /* BITMAP_ID */
-            av_new_packet(pkt, len-2);
+            if ((res = av_new_packet(pkt, len-2)) < 0)
+                return res;
             avio_read(pb, pkt->data, 4);
             if (AV_RB32(pkt->data) == 0xffd8ffd9 ||
                 AV_RB32(pkt->data) == 0xffd9ffd8) {

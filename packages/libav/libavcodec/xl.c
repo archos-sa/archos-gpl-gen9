@@ -45,7 +45,7 @@ static int decode_frame(AVCodecContext *avctx,
     const uint8_t *buf = avpkt->data;
     int buf_size = avpkt->size;
     VideoXLContext * const a = avctx->priv_data;
-    AVFrame * const p= (AVFrame*)&a->pic;
+    AVFrame * const p = &a->pic;
     uint8_t *Y, *U, *V;
     int i, j;
     int stride;
@@ -153,5 +153,5 @@ AVCodec ff_xl_decoder = {
     .close          = decode_end,
     .decode         = decode_frame,
     .capabilities   = CODEC_CAP_DR1,
-    .long_name = NULL_IF_CONFIG_SMALL("Miro VideoXL"),
+    .long_name      = NULL_IF_CONFIG_SMALL("Miro VideoXL"),
 };

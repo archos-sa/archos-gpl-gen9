@@ -32,7 +32,19 @@
  *
  * @param buf buffer containing frame data to be passed down the filtergraph.
  * This function will take ownership of buf, the user must not free it.
+ * A NULL buf signals EOF -- i.e. no more frames will be sent to this filter.
  */
 int av_buffersrc_buffer(AVFilterContext *s, AVFilterBufferRef *buf);
+
+/**
+ * Add a frame to the buffer source.
+ *
+ * @param s an instance of the buffersrc filter.
+ * @param frame frame to be added.
+ *
+ * @warning frame data will be memcpy()ed, which may be a big performance
+ *          hit. Use av_buffersrc_buffer() to avoid copying the data.
+ */
+int av_buffersrc_write_frame(AVFilterContext *s, AVFrame *frame);
 
 #endif /* AVFILTER_BUFFERSRC_H */

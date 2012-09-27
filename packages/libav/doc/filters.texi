@@ -14,12 +14,14 @@ number of input and output pads of the filter.
 A filter with no input pads is called a "source", a filter with no
 output pads is called a "sink".
 
+@anchor{Filtergraph syntax}
 @section Filtergraph syntax
 
-A filtergraph can be represented using a textual representation, which
-is recognized by the @code{-vf} and @code{-af} options in @command{avconv}
-and @command{avplay}, and by the @code{av_parse_graph()} function defined in
-@file{libavfilter/avfiltergraph}.
+A filtergraph can be represented using a textual representation, which is
+recognized by the @option{-filter}/@option{-vf} and @option{-filter_complex}
+options in @command{avconv} and @option{-vf} in @command{avplay}, and by the
+@code{avfilter_graph_parse()}/@code{avfilter_graph_parse2()} function defined in
+@file{libavfilter/avfiltergraph.h}.
 
 A filterchain consists of a sequence of connected filters, each one
 connected to the previous one in the sequence. A filterchain is
@@ -76,6 +78,12 @@ In a complete filterchain all the unlabelled filter input and output
 pads must be connected. A filtergraph is considered valid if all the
 filter input and output pads of all the filterchains are connected.
 
+Libavfilter will automatically insert scale filters where format
+conversion is required. It is possible to specify swscale flags
+for those automatically inserted scalers by prepending
+@code{sws_flags=@var{flags};}
+to the filtergraph description.
+
 Follows a BNF description for the filtergraph syntax:
 @example
 @var{NAME}             ::= sequence of alphanumeric characters and '_'
@@ -84,7 +92,7 @@ Follows a BNF description for the filtergraph syntax:
 @var{FILTER_ARGUMENTS} ::= sequence of chars (eventually quoted)
 @var{FILTER}           ::= [@var{LINKNAMES}] @var{NAME} ["=" @var{ARGUMENTS}] [@var{LINKNAMES}]
 @var{FILTERCHAIN}      ::= @var{FILTER} [,@var{FILTERCHAIN}]
-@var{FILTERGRAPH}      ::= @var{FILTERCHAIN} [;@var{FILTERGRAPH}]
+@var{FILTERGRAPH}      ::= [sws_flags=@var{flags};] @var{FILTERCHAIN} [;@var{FILTERGRAPH}]
 @end example
 
 @c man end FILTERGRAPH DESCRIPTION
@@ -99,9 +107,111 @@ build.
 
 Below is a description of the currently available audio filters.
 
+@section aformat
+
+Convert the input audio to one of the specified formats. The framework will
+negotiate the most appropriate format to minimize conversions.
+
+The filter accepts the following named parameters:
+@table @option
+
+@item sample_fmts
+A comma-separated list of requested sample formats.
+
+@item sample_rates
+A comma-separated list of requested sample rates.
+
+@item channel_layouts
+A comma-separated list of requested channel layouts.
+
+@end table
+
+If a parameter is omitted, all values are allowed.
+
+For example to force the output to either unsigned 8-bit or signed 16-bit stereo:
+@example
+aformat=sample_fmts\=u8\,s16:channel_layouts\=stereo
+@end example
+
+@section amix
+
+Mixes multiple audio inputs into a single output.
+
+For example
+@example
+avconv -i INPUT1 -i INPUT2 -i INPUT3 -filter_complex amix=inputs=3:duration=first:dropout_transition=3 OUTPUT
+@end example
+will mix 3 input audio streams to a single output with the same duration as the
+first input and a dropout transition time of 3 seconds.
+
+The filter accepts the following named parameters:
+@table @option
+
+@item inputs
+Number of inputs. If unspecified, it defaults to 2.
+
+@item duration
+How to determine the end-of-stream.
+@table @option
+
+@item longest
+Duration of longest input. (default)
+
+@item shortest
+Duration of shortest input.
+
+@item first
+Duration of first input.
+
+@end table
+
+@item dropout_transition
+Transition time, in seconds, for volume renormalization when an input
+stream ends. The default value is 2 seconds.
+
+@end table
+
 @section anull
 
 Pass the audio source unchanged to the output.
+
+@section asplit
+
+Split input audio into several identical outputs.
+
+The filter accepts a single parameter which specifies the number of outputs. If
+unspecified, it defaults to 2.
+
+For example
+@example
+avconv -i INPUT -filter_complex asplit=5 OUTPUT
+@end example
+will create 5 copies of the input audio.
+
+@section asyncts
+Synchronize audio data with timestamps by squeezing/stretching it and/or
+dropping samples/adding silence when needed.
+
+The filter accepts the following named parameters:
+@table @option
+
+@item compensate
+Enable stretching/squeezing the data to make it match the timestamps.
+
+@item min_delta
+Minimum difference between timestamps and audio data (in seconds) to trigger
+adding/dropping samples.
+
+@item max_comp
+Maximum compensation in samples per second.
+
+@end table
+
+@section resample
+Convert the audio sample format, sample rate and channel layout. This filter is
+not meant to be used directly, it is inserted automatically by libavfilter
+whenever conversion is needed. Use the @var{aformat} filter to force a specific
+conversion.
 
 @c man end AUDIO FILTERS
 
@@ -137,6 +247,33 @@ anullsrc=48000:4
 anullsrc=48000:mono
 @end example
 
+@section abuffer
+Buffer audio frames, and make them available to the filter chain.
+
+This source is not intended to be part of user-supplied graph descriptions but
+for insertion by calling programs through the interface defined in
+@file{libavfilter/buffersrc.h}.
+
+It accepts the following named parameters:
+@table @option
+
+@item time_base
+Timebase which will be used for timestamps of submitted frames. It must be
+either a floating-point number or in @var{numerator}/@var{denominator} form.
+
+@item sample_rate
+Audio sample rate.
+
+@item sample_fmt
+Name of the sample format, as returned by @code{av_get_sample_fmt_name()}.
+
+@item channel_layout
+Channel layout of the audio data, in the form that can be accepted by
+@code{av_get_channel_layout()}.
+@end table
+
+All the parameters need to be explicitly defined.
+
 @c man end AUDIO SOURCES
 
 @chapter Audio Sinks
@@ -149,6 +286,13 @@ Below is a description of the currently available audio sinks.
 Null audio sink, do absolutely nothing with the input audio. It is
 mainly useful as a template and to be employed in analysis / debugging
 tools.
+
+@section abuffersink
+This sink is intended for programmatic use. Frames that arrive on this sink can
+be retrieved by the calling program using the interface defined in
+@file{libavfilter/buffersink.h}.
+
+This filter accepts no parameters.
 
 @c man end AUDIO SINKS
 
@@ -598,6 +742,9 @@ libfreetype flags.
 @item tabsize
 The size in number of spaces to use for rendering the tab.
 Default value is 4.
+
+@item fix_bounds
+If true, check and fix text coords to avoid clipping.
 @end table
 
 For example the command:
@@ -717,6 +864,19 @@ format=yuv420p
 # convert the input video to any of the formats in the list
 format=yuv420p:yuv444p:yuv410p
 @end example
+
+@section fps
+
+Convert the video to specified constant framerate by duplicating or dropping
+frames as necessary.
+
+This filter accepts the following named parameters:
+@table @option
+
+@item fps
+Desired output framerate.
+
+@end table
 
 @anchor{frei0r}
 @section frei0r
@@ -1115,15 +1275,12 @@ Follow some examples:
 overlay=main_w-overlay_w-10:main_h-overlay_h-10
 
 # insert a transparent PNG logo in the bottom left corner of the input
-movie=logo.png [logo];
-[in][logo] overlay=10:main_h-overlay_h-10 [out]
+avconv -i input -i logo -filter_complex 'overlay=10:main_h-overlay_h-10' output
 
 # insert 2 different transparent PNG logos (second logo on bottom
 # right corner):
-movie=logo1.png [logo1];
-movie=logo2.png [logo2];
-[in][logo1]       overlay=10:H-h-10 [in+logo1];
-[in+logo1][logo2] overlay=W-w-10:H-h-10 [out]
+avconv -i input -i logo1 -i logo2 -filter_complex
+'overlay=10:H-h-10,overlay=W-w-10:H-h-10' output
 
 # add a transparent color layer on top of the main video,
 # WxH specifies the size of the main input to the overlay filter
@@ -1658,6 +1815,19 @@ not specified it will use the default value of 16.
 Adding this in the beginning of filter chains should make filtering
 faster due to better use of the memory cache.
 
+@section split
+
+Split input video into several identical outputs.
+
+The filter accepts a single parameter which specifies the number of outputs. If
+unspecified, it defaults to 2.
+
+For example
+@example
+avconv -i INPUT -filter_complex split=5 OUTPUT
+@end example
+will create 5 copies of the input video.
+
 @section transpose
 
 Transpose rows with columns in the input video and optionally flip it.
@@ -2057,6 +2227,14 @@ will generate a video with a duration of 5.3 seconds, with size
 
 Below is a description of the currently available video sinks.
 
+@section buffersink
+
+Buffer video frames, and make them available to the end of the filter
+graph.
+
+This sink is intended for a programmatic use through the interface defined in
+@file{libavfilter/buffersink.h}.
+
 @section nullsink
 
 Null video sink, do absolutely nothing with the input video. It is
@@ -2064,4 +2242,3 @@ mainly useful as a template and to be employed in analysis / debugging
 tools.
 
 @c man end VIDEO SINKS
-

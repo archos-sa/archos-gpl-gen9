@@ -73,6 +73,10 @@ const char *avfilter_configuration(void)
 @}
 @end example
 @item
+Do not check for NULL values by comparison, @samp{if (p)} and
+@samp{if (!p)} are correct; @samp{if (p == NULL)} and @samp{if (p != NULL)}
+are not.
+@item
 In case of a single-statement if, no curly braces are required:
 @example
 if (!pic || !picref)
@@ -215,6 +219,8 @@ the following snippet into your @file{.vimrc}:
 set expandtab
 set shiftwidth=4
 set softtabstop=4
+set cindent
+set cinoptions=(0
 " allow tabs in Makefiles
 autocmd FileType make set noexpandtab shiftwidth=8 softtabstop=8
 " Trailing whitespace and tabs are forbidden, so highlight them.
@@ -226,10 +232,16 @@ autocmd InsertEnter * match ForbiddenWhitespace /\t\|\s\+\%#\@@<!$/
 
 For Emacs, add these roughly equivalent lines to your @file{.emacs.d/init.el}:
 @example
-(setq c-default-style "k&r")
-(setq-default c-basic-offset 4)
-(setq-default indent-tabs-mode nil)
-(setq-default show-trailing-whitespace t)
+(c-add-style "libav"
+             '("k&r"
+               (c-basic-offset . 4)
+               (indent-tabs-mode nil)
+               (show-trailing-whitespace t)
+               (c-offsets-alist
+                (statement-cont . (c-lineup-assignments +)))
+               )
+             )
+(setq c-default-style "libav")
 @end example
 
 @section Development Policy
@@ -420,9 +432,7 @@ send a reminder by email. Your patch should eventually be dealt with.
 
 @enumerate
 @item
-    Does @code{make fate} pass with the patch applied?
-@item
-    Does @code{make checkheaders} pass with the patch applied?
+    Does @code{make check} pass with the patch applied?
 @item
     Is the patch against latest Libav git master branch?
 @item

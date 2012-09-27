@@ -79,6 +79,7 @@ static int read_header(AVFormatContext *s)
     vst->codec->codec_tag   = 0; /* no fourcc */
     vst->codec->width       = avio_rl16(pb);
     vst->codec->height      = avio_rl16(pb);
+    vst->duration           =
     vst->nb_frames          =
     ast->nb_index_entries   = avio_rl16(pb);
     avpriv_set_pts_info(vst, 64, avio_rl16(pb), 1000);
@@ -207,10 +208,11 @@ static int read_seek(AVFormatContext *s, int stream_index,
 
     if (i < 0 || i >= ast->nb_index_entries)
         return 0;
+    if (avio_seek(s->pb, ast->index_entries[i].pos, SEEK_SET) < 0)
+        return -1;
 
     jv->state = JV_AUDIO;
     jv->pts   = i;
-    avio_seek(s->pb, ast->index_entries[i].pos, SEEK_SET);
     return 0;
 }
 

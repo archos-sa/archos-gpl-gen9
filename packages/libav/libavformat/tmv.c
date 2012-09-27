@@ -174,7 +174,8 @@ static int tmv_read_seek(AVFormatContext *s, int stream_index,
     pos = timestamp *
           (tmv->audio_chunk_size + tmv->video_chunk_size + tmv->padding);
 
-    avio_seek(s->pb, pos + TMV_HEADER_SIZE, SEEK_SET);
+    if (avio_seek(s->pb, pos + TMV_HEADER_SIZE, SEEK_SET) < 0)
+        return -1;
     tmv->stream_index = 0;
     return 0;
 }
@@ -187,5 +188,5 @@ AVInputFormat ff_tmv_demuxer = {
     .read_header    = tmv_read_header,
     .read_packet    = tmv_read_packet,
     .read_seek      = tmv_read_seek,
-    .flags = AVFMT_GENERIC_INDEX,
+    .flags          = AVFMT_GENERIC_INDEX,
 };

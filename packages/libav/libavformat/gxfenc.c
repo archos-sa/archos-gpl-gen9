@@ -524,17 +524,6 @@ static int gxf_write_umf_media_audio(AVIOContext *pb, GXFStreamContext *sc)
     return 32;
 }
 
-#if 0
-static int gxf_write_umf_media_mjpeg(AVIOContext *pb, GXFStreamContext *sc)
-{
-    avio_wb64(pb, 0); /* FIXME FLOAT max chroma quant level */
-    avio_wb64(pb, 0); /* FIXME FLOAT max luma quant level */
-    avio_wb64(pb, 0); /* FIXME FLOAT min chroma quant level */
-    avio_wb64(pb, 0); /* FIXME FLOAT min luma quant level */
-    return 32;
-}
-#endif
-
 static int gxf_write_umf_media_description(AVFormatContext *s)
 {
     GXFContext *gxf = s->priv_data;
@@ -936,7 +925,7 @@ static int gxf_interleave_packet(AVFormatContext *s, AVPacket *out, AVPacket *pk
     if (pkt && s->streams[pkt->stream_index]->codec->codec_type == AVMEDIA_TYPE_VIDEO)
         pkt->duration = 2; // enforce 2 fields
     return ff_audio_rechunk_interleave(s, out, pkt, flush,
-                               av_interleave_packet_per_dts, gxf_compare_field_nb);
+                               ff_interleave_packet_per_dts, gxf_compare_field_nb);
 }
 
 AVOutputFormat ff_gxf_muxer = {

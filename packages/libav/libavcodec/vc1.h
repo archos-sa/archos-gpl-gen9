@@ -28,6 +28,8 @@
 #include "intrax8.h"
 #include "vc1dsp.h"
 
+#define AC_VLC_BITS 9
+
 /** Markers used in VC-1 AP frame data */
 //@{
 enum VC1Code {
@@ -441,11 +443,12 @@ static av_always_inline int vc1_unescape_buffer(const uint8_t *src, int size, ui
  * @param gb GetBit context initialized from Codec context extra_data
  * @return Status
  */
-int vc1_decode_sequence_header(AVCodecContext *avctx, VC1Context *v, GetBitContext *gb);
+int ff_vc1_decode_sequence_header(AVCodecContext *avctx, VC1Context *v, GetBitContext *gb);
 
-int vc1_decode_entry_point(AVCodecContext *avctx, VC1Context *v, GetBitContext *gb);
+int ff_vc1_decode_entry_point(AVCodecContext *avctx, VC1Context *v, GetBitContext *gb);
 
-int vc1_parse_frame_header    (VC1Context *v, GetBitContext *gb);
-int vc1_parse_frame_header_adv(VC1Context *v, GetBitContext *gb);
+int ff_vc1_parse_frame_header    (VC1Context *v, GetBitContext *gb);
+int ff_vc1_parse_frame_header_adv(VC1Context *v, GetBitContext *gb);
+int ff_vc1_init_common(VC1Context *v);
 
 #endif /* AVCODEC_VC1_H */

@@ -24,6 +24,8 @@
  */
 
 #include "avfilter.h"
+#include "formats.h"
+#include "video.h"
 #include "libavutil/pixdesc.h"
 #include "libavutil/colorspace.h"
 #include "libavutil/imgutils.h"
@@ -100,7 +102,7 @@ static int query_formats(AVFilterContext *ctx)
         PIX_FMT_NONE
     };
 
-    avfilter_set_common_formats(ctx, avfilter_make_format_list(pix_fmts));
+    ff_set_common_formats(ctx, ff_make_format_list(pix_fmts));
     return 0;
 }
 
@@ -143,12 +145,12 @@ static int color_request_frame(AVFilterLink *link)
     picref->pts                 = color->pts++;
     picref->pos                 = -1;
 
-    avfilter_start_frame(link, avfilter_ref_buffer(picref, ~0));
+    ff_start_frame(link, avfilter_ref_buffer(picref, ~0));
     ff_draw_rectangle(picref->data, picref->linesize,
                       color->line, color->line_step, color->hsub, color->vsub,
                       0, 0, color->w, color->h);
-    avfilter_draw_slice(link, 0, color->h, 1);
-    avfilter_end_frame(link);
+    ff_draw_slice(link, 0, color->h, 1);
+    ff_end_frame(link);
     avfilter_unref_buffer(picref);
 
     return 0;

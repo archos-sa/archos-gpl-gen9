@@ -29,6 +29,8 @@
 #include "libavutil/pixdesc.h"
 #include "libavutil/imgutils.h"
 #include "avfilter.h"
+#include "formats.h"
+#include "video.h"
 
 typedef struct {
     int hsub, vsub;
@@ -83,7 +85,7 @@ static int query_formats(AVFilterContext *ctx)
         PIX_FMT_NONE
     };
 
-    avfilter_set_common_formats(ctx, avfilter_make_format_list(pix_fmts));
+    ff_set_common_formats(ctx, ff_make_format_list(pix_fmts));
     return 0;
 }
 
@@ -129,7 +131,7 @@ static void start_frame(AVFilterLink *inlink, AVFilterBufferRef *picref)
         outlink->out_buf->video->pixel_aspect.den = picref->video->pixel_aspect.num;
     }
 
-    avfilter_start_frame(outlink, avfilter_ref_buffer(outlink->out_buf, ~0));
+    ff_start_frame(outlink, avfilter_ref_buffer(outlink->out_buf, ~0));
 }
 
 static void end_frame(AVFilterLink *inlink)
@@ -190,8 +192,8 @@ static void end_frame(AVFilterLink *inlink)
     }
 
     avfilter_unref_buffer(inpic);
-    avfilter_draw_slice(outlink, 0, outpic->video->h, 1);
-    avfilter_end_frame(outlink);
+    ff_draw_slice(outlink, 0, outpic->video->h, 1);
+    ff_end_frame(outlink);
     avfilter_unref_buffer(outpic);
 }
 

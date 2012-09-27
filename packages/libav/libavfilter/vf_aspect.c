@@ -25,6 +25,7 @@
 
 #include "libavutil/mathematics.h"
 #include "avfilter.h"
+#include "video.h"
 
 typedef struct {
     AVRational aspect;
@@ -67,7 +68,7 @@ static void start_frame(AVFilterLink *link, AVFilterBufferRef *picref)
     AspectContext *aspect = link->dst->priv;
 
     picref->video->pixel_aspect = aspect->aspect;
-    avfilter_start_frame(link->dst->outputs[0], picref);
+    ff_start_frame(link->dst->outputs[0], picref);
 }
 
 #if CONFIG_SETDAR_FILTER
@@ -100,9 +101,9 @@ AVFilter avfilter_vf_setdar = {
     .inputs    = (AVFilterPad[]) {{ .name             = "default",
                                     .type             = AVMEDIA_TYPE_VIDEO,
                                     .config_props     = setdar_config_props,
-                                    .get_video_buffer = avfilter_null_get_video_buffer,
+                                    .get_video_buffer = ff_null_get_video_buffer,
                                     .start_frame      = start_frame,
-                                    .end_frame        = avfilter_null_end_frame },
+                                    .end_frame        = ff_null_end_frame },
                                   { .name = NULL}},
 
     .outputs   = (AVFilterPad[]) {{ .name             = "default",
@@ -133,9 +134,9 @@ AVFilter avfilter_vf_setsar = {
     .inputs    = (AVFilterPad[]) {{ .name             = "default",
                                     .type             = AVMEDIA_TYPE_VIDEO,
                                     .config_props     = setsar_config_props,
-                                    .get_video_buffer = avfilter_null_get_video_buffer,
+                                    .get_video_buffer = ff_null_get_video_buffer,
                                     .start_frame      = start_frame,
-                                    .end_frame        = avfilter_null_end_frame },
+                                    .end_frame        = ff_null_end_frame },
                                   { .name = NULL}},
 
     .outputs   = (AVFilterPad[]) {{ .name             = "default",

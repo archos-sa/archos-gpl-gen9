@@ -24,6 +24,8 @@
  */
 
 #include "avfilter.h"
+#include "internal.h"
+#include "video.h"
 
 typedef struct BufPic {
     AVFilterBufferRef *picref;
@@ -76,15 +78,15 @@ static int request_frame(AVFilterLink *outlink)
     int ret;
 
     if (!fifo->root.next) {
-        if ((ret = avfilter_request_frame(outlink->src->inputs[0]) < 0))
+        if ((ret = ff_request_frame(outlink->src->inputs[0]) < 0))
             return ret;
     }
 
     /* by doing this, we give ownership of the reference to the next filter,
      * so we don't have to worry about dereferencing it ourselves. */
-    avfilter_start_frame(outlink, fifo->root.next->picref);
-    avfilter_draw_slice (outlink, 0, outlink->h, 1);
-    avfilter_end_frame  (outlink);
+    ff_start_frame(outlink, fifo->root.next->picref);
+    ff_draw_slice (outlink, 0, outlink->h, 1);
+    ff_end_frame  (outlink);
 
     if (fifo->last == fifo->root.next)
         fifo->last = &fifo->root;
@@ -106,7 +108,7 @@ AVFilter avfilter_vf_fifo = {
 
     .inputs    = (AVFilterPad[]) {{ .name            = "default",
                                     .type            = AVMEDIA_TYPE_VIDEO,
-                                    .get_video_buffer= avfilter_null_get_video_buffer,
+                                    .get_video_buffer= ff_null_get_video_buffer,
                                     .start_frame     = start_frame,
                                     .draw_slice      = draw_slice,
                                     .end_frame       = end_frame,

@@ -8,18 +8,35 @@ SUBDIR := $(notdir $(LOCAL_PATH))/
 
 OBJS :=
 OBJS-yes :=
+ARMV5TE-OBJS :=
+ARMV5TE-OBJS-yes :=
+ARMV6-OBJS :=
+ARMV6-OBJS-yes :=
+ARMVFP-OBJS :=
+ARMVFP-OBJS-yes :=
+NEON-OBJS :=
+NEON-OBJS-yes :=
+MMI-OBJS :=
+MMI-OBJS-yes :=
+ALTIVEC-OBJS :=
+ALTIVEC-OBJS-yes :=
+VIS-OBJS :=
+VIS-OBJS-yes :=
+MMX-OBJS :=
 MMX-OBJS-yes :=
+YASM-OBJS :=
+YASM-OBJS-yes :=
 include $(LOCAL_PATH)/Makefile
 -include $(LOCAL_PATH)/arm/Makefile
+include $(SRC_PATH)/arch.mak
 
 # collect objects
-OBJS-$(HAVE_MMX) += $(MMX-OBJS-yes)
 OBJS += $(OBJS-yes)
 
 FFNAME := lib$(NAME)
 AFFLIBS := $(addprefix lib,$(FFLIBS))
 
-FFCFLAGS  = -DHAVE_AV_CONFIG_H -Wno-sign-compare -Wno-switch -Wno-pointer-sign
+FFCFLAGS  = -DHAVE_AV_CONFIG_H -Wno-sign-compare -Wno-switch -Wno-pointer-sign -std=c99
 
 OBJS := $(patsubst $(SUBDIR)%,%,$(OBJS))
 

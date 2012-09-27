@@ -29,8 +29,9 @@
 #include "libavutil/eval.h"
 #include "libavutil/mathematics.h"
 #include "avfilter.h"
+#include "video.h"
 
-static const char *var_names[] = {
+static const char *const var_names[] = {
     "E",           ///< Euler number
     "INTERLACED",  ///< tell if the current frame is interlaced
     "N",           ///< frame number (starting at zero)
@@ -128,7 +129,7 @@ static void start_frame(AVFilterLink *inlink, AVFilterBufferRef *inpicref)
     setpts->var_values[VAR_N] += 1.0;
     setpts->var_values[VAR_PREV_INPTS ] = TS2D(inpicref ->pts);
     setpts->var_values[VAR_PREV_OUTPTS] = TS2D(outpicref->pts);
-    avfilter_start_frame(inlink->dst->outputs[0], outpicref);
+    ff_start_frame(inlink->dst->outputs[0], outpicref);
 }
 
 static av_cold void uninit(AVFilterContext *ctx)
@@ -148,7 +149,7 @@ AVFilter avfilter_vf_setpts = {
 
     .inputs    = (AVFilterPad[]) {{ .name             = "default",
                                     .type             = AVMEDIA_TYPE_VIDEO,
-                                    .get_video_buffer = avfilter_null_get_video_buffer,
+                                    .get_video_buffer = ff_null_get_video_buffer,
                                     .config_props     = config_input,
                                     .start_frame      = start_frame, },
                                   { .name = NULL }},

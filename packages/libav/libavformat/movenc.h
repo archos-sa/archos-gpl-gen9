@@ -44,7 +44,7 @@ typedef struct MOVIentry {
     uint64_t     pos;
     int64_t      dts;
     unsigned int size;
-    unsigned int samplesInChunk;
+    unsigned int samples_in_chunk;
     unsigned int entries;
     int          cts;
 #define MOV_SYNC_SAMPLE         0x0001
@@ -78,20 +78,20 @@ typedef struct MOVIndex {
     int         entry;
     unsigned    timescale;
     uint64_t    time;
-    int64_t     trackDuration;
-    long        sampleCount;
-    long        sampleSize;
-    int         hasKeyframes;
+    int64_t     track_duration;
+    long        sample_count;
+    long        sample_size;
+    int         has_keyframes;
 #define MOV_TRACK_CTTS         0x0001
 #define MOV_TRACK_STPS         0x0002
     uint32_t    flags;
     int         language;
-    int         trackID;
+    int         track_id;
     int         tag; ///< stsd fourcc
     AVCodecContext *enc;
 
-    int         vosLen;
-    uint8_t     *vosData;
+    int         vos_len;
+    uint8_t     *vos_data;
     MOVIentry   *cluster;
     int         audio_vbr;
     int         height; ///< active picture (w/o VBI) height for D-10/IMX
@@ -120,6 +120,15 @@ typedef struct MOVIndex {
 
     int         nb_frag_info;
     MOVFragmentInfo *frag_info;
+
+    struct {
+        int64_t struct_offset;
+        int     first_packet_seq;
+        int     first_packet_entry;
+        int     packet_seq;
+        int     packet_entry;
+        int     slices;
+    } vc1_info;
 } MOVTrack;
 
 typedef struct MOVMuxContext {
@@ -140,8 +149,10 @@ typedef struct MOVMuxContext {
 
     int fragments;
     int max_fragment_duration;
+    int min_fragment_duration;
     int max_fragment_size;
     int ism_lookahead;
+    AVIOContext *mdat_buf;
 } MOVMuxContext;
 
 #define FF_MOV_FLAG_RTP_HINT 1

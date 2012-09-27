@@ -114,6 +114,5 @@ AVInputFormat ff_iv8_demuxer = {
     .read_probe     = probe,
     .read_header    = read_header,
     .read_packet    = read_packet,
-    .flags= AVFMT_GENERIC_INDEX,
-    .value = CODEC_ID_MPEG4,
+    .flags          = AVFMT_GENERIC_INDEX,
 };

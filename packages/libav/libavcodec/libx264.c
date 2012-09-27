@@ -66,6 +66,7 @@ typedef struct X264Context {
     char *partitions;
     int direct_pred;
     int slice_max_size;
+    char *stats;
 } X264Context;
 
 static void X264_log(void *p, int level, const char *fmt, va_list args)
@@ -84,12 +85,23 @@ static void X264_log(void *p, int level, const char *fmt, va_list args)
 }
 
 
-static int encode_nals(AVCodecContext *ctx, uint8_t *buf, int size,
-                       x264_nal_t *nals, int nnal, int skip_sei)
+static int encode_nals(AVCodecContext *ctx, AVPacket *pkt,
+                       x264_nal_t *nals, int nnal)
 {
     X264Context *x4 = ctx->priv_data;
-    uint8_t *p = buf;
-    int i;
+    uint8_t *p;
+    int i, size = x4->sei_size, ret;
+
+    if (!nnal)
+        return 0;
+
+    for (i = 0; i < nnal; i++)
+        size += nals[i].i_payload;
+
+    if ((ret = ff_alloc_packet(pkt, size)) < 0)
+        return ret;
+
+    p = pkt->data;
 
     /* Write the SEI as part of the first frame. */
     if (x4->sei_size > 0 && nnal > 0) {
@@ -99,27 +111,19 @@ static int encode_nals(AVCodecContext *ctx, uint8_t *buf, int size,
     }
 
     for (i = 0; i < nnal; i++){
-        /* Don't put the SEI in extradata. */
-        if (skip_sei && nals[i].i_type == NAL_SEI) {
-            x4->sei_size = nals[i].i_payload;
-            x4->sei      = av_malloc(x4->sei_size);
-            memcpy(x4->sei, nals[i].p_payload, nals[i].i_payload);
-            continue;
-        }
         memcpy(p, nals[i].p_payload, nals[i].i_payload);
         p += nals[i].i_payload;
     }
 
-    return p - buf;
+    return 1;
 }
 
-static int X264_frame(AVCodecContext *ctx, uint8_t *buf,
-                      int bufsize, void *data)
+static int X264_frame(AVCodecContext *ctx, AVPacket *pkt, const AVFrame *frame,
+                      int *got_packet)
 {
     X264Context *x4 = ctx->priv_data;
-    AVFrame *frame = data;
     x264_nal_t *nal;
-    int nnal, i;
+    int nnal, i, ret;
     x264_picture_t pic_out;
 
     x264_picture_init( &x4->pic );
@@ -147,16 +151,16 @@ static int X264_frame(AVCodecContext *ctx, uint8_t *buf,
     }
 
     do {
-    if (x264_encoder_encode(x4->enc, &nal, &nnal, frame? &x4->pic: NULL, &pic_out) < 0)
-        return -1;
+        if (x264_encoder_encode(x4->enc, &nal, &nnal, frame? &x4->pic: NULL, &pic_out) < 0)
+            return -1;
 
-    bufsize = encode_nals(ctx, buf, bufsize, nal, nnal, 0);
-    if (bufsize < 0)
-        return -1;
-    } while (!bufsize && !frame && x264_encoder_delayed_frames(x4->enc));
+        ret = encode_nals(ctx, pkt, nal, nnal);
+        if (ret < 0)
+            return -1;
+    } while (!ret && !frame && x264_encoder_delayed_frames(x4->enc));
 
-    /* FIXME: libx264 now provides DTS, but AVFrame doesn't have a field for it. */
-    x4->out_pic.pts = pic_out.i_pts;
+    pkt->pts = pic_out.i_pts;
+    pkt->dts = pic_out.i_dts;
 
     switch (pic_out.i_type) {
     case X264_TYPE_IDR:
@@ -172,11 +176,12 @@ static int X264_frame(AVCodecContext *ctx, uint8_t *buf,
         break;
     }
 
-    x4->out_pic.key_frame = pic_out.b_keyframe;
-    if (bufsize)
+    pkt->flags |= AV_PKT_FLAG_KEY*pic_out.b_keyframe;
+    if (ret)
         x4->out_pic.quality = (pic_out.i_qpplus1 - 1) * FF_QP2LAMBDA;
 
-    return bufsize;
+    *got_packet = ret;
+    return 0;
 }
 
 static av_cold int X264_close(AVCodecContext *avctx)
@@ -321,6 +326,7 @@ static av_cold int X264_init(AVCodecContext *avctx)
     PARSE_X264_OPT("psy-rd", psy_rd);
     PARSE_X264_OPT("deblock", deblock);
     PARSE_X264_OPT("partitions", partitions);
+    PARSE_X264_OPT("stats", stats);
     if (x4->psy >= 0)
         x4->params.analyse.b_psy  = x4->psy;
     if (x4->rc_lookahead >= 0)
@@ -375,6 +381,8 @@ static av_cold int X264_init(AVCodecContext *avctx)
     x4->params.analyse.b_psnr = avctx->flags & CODEC_FLAG_PSNR;
 
     x4->params.i_threads      = avctx->thread_count;
+    if (avctx->thread_type)
+        x4->params.b_sliced_threads = avctx->thread_type == FF_THREAD_SLICE;
 
     x4->params.b_interlaced   = avctx->flags & CODEC_FLAG_INTERLACED_DCT;
 
@@ -403,16 +411,25 @@ static av_cold int X264_init(AVCodecContext *avctx)
 
     if (avctx->flags & CODEC_FLAG_GLOBAL_HEADER) {
         x264_nal_t *nal;
+        uint8_t *p;
         int nnal, s, i;
 
         s = x264_encoder_headers(x4->enc, &nal, &nnal);
+        avctx->extradata = p = av_malloc(s);
 
-        for (i = 0; i < nnal; i++)
-            if (nal[i].i_type == NAL_SEI)
+        for (i = 0; i < nnal; i++) {
+            /* Don't put the SEI in extradata. */
+            if (nal[i].i_type == NAL_SEI) {
                 av_log(avctx, AV_LOG_INFO, "%s\n", nal[i].p_payload+25);
-
-        avctx->extradata      = av_malloc(s);
-        avctx->extradata_size = encode_nals(avctx, avctx->extradata, s, nal, nnal, 1);
+                x4->sei_size = nal[i].i_payload;
+                x4->sei      = av_malloc(x4->sei_size);
+                memcpy(x4->sei, nal[i].p_payload, nal[i].i_payload);
+                continue;
+            }
+            memcpy(p, nal[i].p_payload, nal[i].i_payload);
+            p += nal[i].i_payload;
+        }
+        avctx->extradata_size = p - avctx->extradata;
     }
 
     return 0;
@@ -491,7 +508,8 @@ static const AVOption options[] = {
     { "spatial",       NULL,      0,    AV_OPT_TYPE_CONST, { X264_DIRECT_PRED_SPATIAL },  0, 0, VE, "direct-pred" },
     { "temporal",      NULL,      0,    AV_OPT_TYPE_CONST, { X264_DIRECT_PRED_TEMPORAL }, 0, 0, VE, "direct-pred" },
     { "auto",          NULL,      0,    AV_OPT_TYPE_CONST, { X264_DIRECT_PRED_AUTO },     0, 0, VE, "direct-pred" },
-    { "slice-max-size","Constant quantization parameter rate control method",OFFSET(slice_max_size),        AV_OPT_TYPE_INT,    {-1 }, -1, INT_MAX, VE },
+    { "slice-max-size","Limit the size of each slice in bytes",           OFFSET(slice_max_size),AV_OPT_TYPE_INT,    {-1 }, -1, INT_MAX, VE },
+    { "stats",         "Filename for 2 pass stats",                       OFFSET(stats),         AV_OPT_TYPE_STRING, { 0 },  0,       0, VE },
     { NULL },
 };
 
@@ -523,20 +541,21 @@ static const AVCodecDefault x264_defaults[] = {
     { "coder",            "-1" },
     { "cmp",              "-1" },
     { "threads",          AV_STRINGIFY(X264_THREADS_AUTO) },
+    { "thread_type",      "0" },
     { NULL },
 };
 
 AVCodec ff_libx264_encoder = {
-    .name           = "libx264",
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = CODEC_ID_H264,
-    .priv_data_size = sizeof(X264Context),
-    .init           = X264_init,
-    .encode         = X264_frame,
-    .close          = X264_close,
-    .capabilities   = CODEC_CAP_DELAY | CODEC_CAP_AUTO_THREADS,
-    .long_name      = NULL_IF_CONFIG_SMALL("libx264 H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10"),
-    .priv_class     = &class,
-    .defaults       = x264_defaults,
+    .name             = "libx264",
+    .type             = AVMEDIA_TYPE_VIDEO,
+    .id               = CODEC_ID_H264,
+    .priv_data_size   = sizeof(X264Context),
+    .init             = X264_init,
+    .encode2          = X264_frame,
+    .close            = X264_close,
+    .capabilities     = CODEC_CAP_DELAY | CODEC_CAP_AUTO_THREADS,
+    .long_name        = NULL_IF_CONFIG_SMALL("libx264 H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10"),
+    .priv_class       = &class,
+    .defaults         = x264_defaults,
     .init_static_data = X264_init_static,
 };

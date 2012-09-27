@@ -29,9 +29,11 @@
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 #include "avfilter.h"
+#include "formats.h"
 #include "internal.h"
+#include "video.h"
 
-static const char *var_names[] = {
+static const char *const var_names[] = {
     "E",
     "PHI",
     "PI",
@@ -163,7 +165,7 @@ static int query_formats(AVFilterContext *ctx)
     enum PixelFormat *pix_fmts = lut->is_rgb ? rgb_pix_fmts :
                                  lut->is_yuv ? yuv_pix_fmts : all_pix_fmts;
 
-    avfilter_set_common_formats(ctx, avfilter_make_format_list(pix_fmts));
+    ff_set_common_formats(ctx, ff_make_format_list(pix_fmts));
     return 0;
 }
 
@@ -337,7 +339,7 @@ static void draw_slice(AVFilterLink *inlink, int y, int h, int slice_dir)
         }
     }
 
-    avfilter_draw_slice(outlink, y, h, slice_dir);
+    ff_draw_slice(outlink, y, h, slice_dir);
 }
 
 #define DEFINE_LUT_FILTER(name_, description_, init_)                   \

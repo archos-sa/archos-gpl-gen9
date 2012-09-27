@@ -64,18 +64,19 @@ typedef struct FLVStreamContext {
     int64_t last_ts;    ///< last timestamp for each stream
 } FLVStreamContext;
 
-static int get_audio_flags(AVCodecContext *enc){
+static int get_audio_flags(AVFormatContext *s, AVCodecContext *enc)
+{
     int flags = (enc->bits_per_coded_sample == 16) ? FLV_SAMPLESSIZE_16BIT : FLV_SAMPLESSIZE_8BIT;
 
     if (enc->codec_id == CODEC_ID_AAC) // specs force these parameters
         return FLV_CODECID_AAC | FLV_SAMPLERATE_44100HZ | FLV_SAMPLESSIZE_16BIT | FLV_STEREO;
     else if (enc->codec_id == CODEC_ID_SPEEX) {
         if (enc->sample_rate != 16000) {
-            av_log(enc, AV_LOG_ERROR, "flv only supports wideband (16kHz) Speex audio\n");
+            av_log(s, AV_LOG_ERROR, "flv only supports wideband (16kHz) Speex audio\n");
             return -1;
         }
         if (enc->channels != 1) {
-            av_log(enc, AV_LOG_ERROR, "flv only supports mono Speex audio\n");
+            av_log(s, AV_LOG_ERROR, "flv only supports mono Speex audio\n");
             return -1;
         }
         return FLV_CODECID_SPEEX | FLV_SAMPLERATE_11025HZ | FLV_SAMPLESSIZE_16BIT;
@@ -98,7 +99,7 @@ static int get_audio_flags(AVCodecContext *enc){
                 break;
             }
         default:
-            av_log(enc, AV_LOG_ERROR, "flv does not support that sample rate, choose from (44100, 22050, 11025).\n");
+            av_log(s, AV_LOG_ERROR, "flv does not support that sample rate, choose from (44100, 22050, 11025).\n");
             return -1;
     }
     }
@@ -136,7 +137,7 @@ static int get_audio_flags(AVCodecContext *enc){
         flags |= enc->codec_tag<<4;
         break;
     default:
-        av_log(enc, AV_LOG_ERROR, "codec not compatible with flv\n");
+        av_log(s, AV_LOG_ERROR, "codec not compatible with flv\n");
         return -1;
     }
 
@@ -177,7 +178,7 @@ static int flv_write_header(AVFormatContext *s)
 {
     AVIOContext *pb = s->pb;
     FLVContext *flv = s->priv_data;
-    AVCodecContext *audio_enc = NULL, *video_enc = NULL;
+    AVCodecContext *audio_enc = NULL, *video_enc = NULL, *data_enc = NULL;
     int i, metadata_count = 0;
     double framerate = 0.0;
     int64_t metadata_size_pos, data_size, metadata_count_pos;
@@ -186,7 +187,8 @@ static int flv_write_header(AVFormatContext *s)
     for(i=0; i<s->nb_streams; i++){
         AVCodecContext *enc = s->streams[i]->codec;
         FLVStreamContext *sc;
-        if (enc->codec_type == AVMEDIA_TYPE_VIDEO) {
+        switch (enc->codec_type) {
+        case AVMEDIA_TYPE_VIDEO:
             if (s->streams[i]->r_frame_rate.den && s->streams[i]->r_frame_rate.num) {
                 framerate = av_q2d(s->streams[i]->r_frame_rate);
             } else {
@@ -194,13 +196,25 @@ static int flv_write_header(AVFormatContext *s)
             }
             video_enc = enc;
             if(enc->codec_tag == 0) {
-                av_log(enc, AV_LOG_ERROR, "video codec not compatible with flv\n");
+                av_log(s, AV_LOG_ERROR, "video codec not compatible with flv\n");
                 return -1;
             }
-        } else {
+            break;
+        case AVMEDIA_TYPE_AUDIO:
             audio_enc = enc;
-            if(get_audio_flags(enc)<0)
-                return -1;
+            if (get_audio_flags(s, enc) < 0)
+                return AVERROR_INVALIDDATA;
+            break;
+        case AVMEDIA_TYPE_DATA:
+            if (enc->codec_id != CODEC_ID_TEXT) {
+                av_log(s, AV_LOG_ERROR, "codec not compatible with flv\n");
+                return AVERROR_INVALIDDATA;
+            }
+            data_enc = enc;
+            break;
+        default:
+            av_log(s, AV_LOG_ERROR, "codec not compatible with flv\n");
+            return -1;
         }
         avpriv_set_pts_info(s->streams[i], 32, 1, 1000); /* 32 bit pts in ms */
 
@@ -246,7 +260,11 @@ static int flv_write_header(AVFormatContext *s)
     /* mixed array (hash) with size and string/type/data tuples */
     avio_w8(pb, AMF_DATA_TYPE_MIXEDARRAY);
     metadata_count_pos = avio_tell(pb);
-    metadata_count = 5*!!video_enc + 5*!!audio_enc + 2; // +2 for duration and file size
+    metadata_count = 5 * !!video_enc +
+                     5 * !!audio_enc +
+                     1 * !!data_enc +
+                     2; // +2 for duration and file size
+
     avio_wb32(pb, metadata_count);
 
     put_amf_string(pb, "duration");
@@ -287,6 +305,11 @@ static int flv_write_header(AVFormatContext *s)
         put_amf_double(pb, audio_enc->codec_tag);
     }
 
+    if (data_enc) {
+        put_amf_string(pb, "datastream");
+        put_amf_double(pb, 0.0);
+    }
+
     while ((tag = av_dict_get(s->metadata, "", tag, AV_DICT_IGNORE_SUFFIX))) {
         put_amf_string(pb, tag->key);
         avio_w8(pb, AMF_DATA_TYPE_STRING);
@@ -324,7 +347,7 @@ static int flv_write_header(AVFormatContext *s)
             avio_wb24(pb, 0); // streamid
             pos = avio_tell(pb);
             if (enc->codec_id == CODEC_ID_AAC) {
-                avio_w8(pb, get_audio_flags(enc));
+                avio_w8(pb, get_audio_flags(s, enc));
                 avio_w8(pb, 0); // AAC sequence header
                 avio_write(pb, enc->extradata, enc->extradata_size);
             } else {
@@ -395,25 +418,32 @@ static int flv_write_packet(AVFormatContext *s, AVPacket *pkt)
     else
         flags_size= 1;
 
-    if (enc->codec_type == AVMEDIA_TYPE_VIDEO) {
+    switch (enc->codec_type) {
+    case AVMEDIA_TYPE_VIDEO:
         avio_w8(pb, FLV_TAG_TYPE_VIDEO);
 
         flags = enc->codec_tag;
         if(flags == 0) {
-            av_log(enc, AV_LOG_ERROR, "video codec %X not compatible with flv\n",enc->codec_id);
+            av_log(s, AV_LOG_ERROR, "video codec %X not compatible with flv\n",enc->codec_id);
             return -1;
         }
 
         flags |= pkt->flags & AV_PKT_FLAG_KEY ? FLV_FRAME_KEY : FLV_FRAME_INTER;
-    } else {
-        assert(enc->codec_type == AVMEDIA_TYPE_AUDIO);
-        flags = get_audio_flags(enc);
+        break;
+    case AVMEDIA_TYPE_AUDIO:
+        flags = get_audio_flags(s, enc);
 
         assert(size);
 
         avio_w8(pb, FLV_TAG_TYPE_AUDIO);
-    }
+        break;
 
+    case AVMEDIA_TYPE_DATA:
+        avio_w8(pb, FLV_TAG_TYPE_META);
+        break;
+    default:
+        return AVERROR(EINVAL);
+    }
     if (enc->codec_id == CODEC_ID_H264) {
         /* check if extradata looks like MP4 */
         if (enc->extradata_size > 0 && *(uint8_t*)enc->extradata != 1) {
@@ -445,6 +475,29 @@ static int flv_write_packet(AVFormatContext *s, AVPacket *pkt)
     avio_wb24(pb,ts);
     avio_w8(pb,(ts >> 24) & 0x7F); // timestamps are 32bits _signed_
     avio_wb24(pb,flv->reserved);
+
+    if (enc->codec_type == AVMEDIA_TYPE_DATA) {
+        int data_size;
+        int metadata_size_pos = avio_tell(pb);
+        avio_w8(pb, AMF_DATA_TYPE_STRING);
+        put_amf_string(pb, "onTextData");
+        avio_w8(pb, AMF_DATA_TYPE_MIXEDARRAY);
+        avio_wb32(pb, 2);
+        put_amf_string(pb, "type");
+        avio_w8(pb, AMF_DATA_TYPE_STRING);
+        put_amf_string(pb, "Text");
+        put_amf_string(pb, "text");
+        avio_w8(pb, AMF_DATA_TYPE_STRING);
+        put_amf_string(pb, pkt->data);
+        put_amf_string(pb, "");
+        avio_w8(pb, AMF_END_OF_OBJECT);
+        /* write total size of tag */
+        data_size = avio_tell(pb) - metadata_size_pos;
+        avio_seek(pb, metadata_size_pos - 10, SEEK_SET);
+        avio_wb24(pb, data_size);
+        avio_seek(pb, data_size + 10 - 3, SEEK_CUR);
+        avio_wb32(pb, data_size + 11);
+    } else {
     avio_w8(pb,flags);
     if (enc->codec_id == CODEC_ID_VP6)
         avio_w8(pb,0);
@@ -461,7 +514,7 @@ static int flv_write_packet(AVFormatContext *s, AVPacket *pkt)
 
     avio_wb32(pb,size+flags_size+11); // previous tag size
     flv->duration = FFMAX(flv->duration, pkt->pts + flv->delay + pkt->duration);
-
+    }
     avio_flush(pb);
 
     av_free(data);
@@ -484,6 +537,9 @@ AVOutputFormat ff_flv_muxer = {
     .write_header   = flv_write_header,
     .write_packet   = flv_write_packet,
     .write_trailer  = flv_write_trailer,
-    .codec_tag= (const AVCodecTag* const []){flv_video_codec_ids, flv_audio_codec_ids, 0},
-    .flags= AVFMT_GLOBALHEADER | AVFMT_VARIABLE_FPS,
+    .codec_tag      = (const AVCodecTag* const []){
+        flv_video_codec_ids, flv_audio_codec_ids, 0
+    },
+    .flags          = AVFMT_GLOBALHEADER | AVFMT_VARIABLE_FPS |
+                      AVFMT_TS_NONSTRICT,
 };

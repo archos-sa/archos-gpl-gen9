@@ -26,14 +26,16 @@
  */
 
 #include "avfilter.h"
+#include "formats.h"
 #include "libavutil/eval.h"
 #include "libavutil/avstring.h"
 #include "libavutil/pixdesc.h"
 #include "libavutil/imgutils.h"
 #include "libavutil/mathematics.h"
 #include "internal.h"
+#include "video.h"
 
-static const char *var_names[] = {
+static const char *const var_names[] = {
     "E",
     "PHI",
     "PI",
@@ -94,12 +96,12 @@ static int query_formats(AVFilterContext *ctx)
 {
     const enum PixelFormat inout_pix_fmts[] = { PIX_FMT_YUV420P,  PIX_FMT_NONE };
     const enum PixelFormat blend_pix_fmts[] = { PIX_FMT_YUVA420P, PIX_FMT_NONE };
-    AVFilterFormats *inout_formats = avfilter_make_format_list(inout_pix_fmts);
-    AVFilterFormats *blend_formats = avfilter_make_format_list(blend_pix_fmts);
+    AVFilterFormats *inout_formats = ff_make_format_list(inout_pix_fmts);
+    AVFilterFormats *blend_formats = ff_make_format_list(blend_pix_fmts);
 
-    avfilter_formats_ref(inout_formats, &ctx->inputs [MAIN   ]->out_formats);
-    avfilter_formats_ref(blend_formats, &ctx->inputs [OVERLAY]->out_formats);
-    avfilter_formats_ref(inout_formats, &ctx->outputs[MAIN   ]->in_formats );
+    ff_formats_ref(inout_formats, &ctx->inputs [MAIN   ]->out_formats);
+    ff_formats_ref(blend_formats, &ctx->inputs [OVERLAY]->out_formats);
+    ff_formats_ref(inout_formats, &ctx->outputs[MAIN   ]->in_formats );
 
     return 0;
 }
@@ -219,7 +221,7 @@ static void start_frame(AVFilterLink *inlink, AVFilterBufferRef *inpicref)
     if (!over->overpicref || over->overpicref->pts < outpicref->pts) {
         AVFilterBufferRef *old = over->overpicref;
         over->overpicref = NULL;
-        avfilter_request_frame(ctx->inputs[OVERLAY]);
+        ff_request_frame(ctx->inputs[OVERLAY]);
         if (over->overpicref) {
             if (old)
                 avfilter_unref_buffer(old);
@@ -227,7 +229,7 @@ static void start_frame(AVFilterLink *inlink, AVFilterBufferRef *inpicref)
             over->overpicref = old;
     }
 
-    avfilter_start_frame(inlink->dst->outputs[0], outpicref);
+    ff_start_frame(inlink->dst->outputs[0], outpicref);
 }
 
 static void start_frame_overlay(AVFilterLink *inlink, AVFilterBufferRef *inpicref)
@@ -332,18 +334,30 @@ static void draw_slice(AVFilterLink *inlink, int y, int h, int slice_dir)
                     over->overpicref->video->w, over->overpicref->video->h,
                     y, outpicref->video->w, h);
     }
-    avfilter_draw_slice(outlink, y, h, slice_dir);
+    ff_draw_slice(outlink, y, h, slice_dir);
 }
 
 static void end_frame(AVFilterLink *inlink)
 {
-    avfilter_end_frame(inlink->dst->outputs[0]);
+    ff_end_frame(inlink->dst->outputs[0]);
     avfilter_unref_buffer(inlink->cur_buf);
 }
 
 static void null_draw_slice(AVFilterLink *inlink, int y, int h, int slice_dir) { }
 
 static void null_end_frame(AVFilterLink *inlink) { }
+
+static int poll_frame(AVFilterLink *link)
+{
+    AVFilterContext   *s = link->src;
+    OverlayContext *over = s->priv;
+    int ret = ff_poll_frame(s->inputs[OVERLAY]);
+
+    if (ret == AVERROR_EOF)
+        ret = !!over->overpicref;
+
+    return ret && ff_poll_frame(s->inputs[MAIN]);
+}
 
 AVFilter avfilter_vf_overlay = {
     .name      = "overlay",
@@ -376,6 +390,7 @@ AVFilter avfilter_vf_overlay = {
                                   { .name = NULL}},
     .outputs   = (AVFilterPad[]) {{ .name            = "default",
                                     .type            = AVMEDIA_TYPE_VIDEO,
-                                    .config_props    = config_output, },
+                                    .config_props    = config_output,
+                                    .poll_frame      = poll_frame },
                                   { .name = NULL}},
 };

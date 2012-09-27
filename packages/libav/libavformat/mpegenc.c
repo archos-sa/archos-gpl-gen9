@@ -318,6 +318,8 @@ static int mpeg_mux_init(AVFormatContext *ctx)
         s->packet_size = ctx->packet_size;
     } else
         s->packet_size = 2048;
+    if (ctx->max_delay < 0) /* Not set by the caller */
+        ctx->max_delay = 0;
 
     s->vcd_padding_bytes_written = 0;
     s->vcd_padding_bitrate=0;
@@ -830,6 +832,12 @@ static int flush_packet(AVFormatContext *ctx, int stream_index,
 
         if (stuffing_size < 0)
             stuffing_size = 0;
+
+        if (startcode == PRIVATE_STREAM_1 && id >= 0xa0) {
+            if (payload_size < av_fifo_size(stream->fifo))
+                stuffing_size += payload_size % stream->lpcm_align;
+        }
+
         if (stuffing_size > 16) {    /*<=16 for MPEG-1, <=32 for MPEG-2*/
             pad_packet_bytes += stuffing_size;
             packet_size      -= stuffing_size;

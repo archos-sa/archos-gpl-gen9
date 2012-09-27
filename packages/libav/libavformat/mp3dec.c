@@ -63,11 +63,31 @@ static int mp3_read_probe(AVProbeData *p)
     }
     // keep this in sync with ac3 probe, both need to avoid
     // issues with MPEG-files!
-    if   (first_frames>=4) return AVPROBE_SCORE_MAX/2+1;
-    else if(max_frames>500)return AVPROBE_SCORE_MAX/2;
-    else if(max_frames>=4) return AVPROBE_SCORE_MAX/4;
-    else if(max_frames>=1) return 1;
-    else                   return 0;
+    if (first_frames >= 4) return AVPROBE_SCORE_MAX / 2 + 1;
+
+    if (max_frames) {
+        int pes = 0, i;
+        unsigned int code = -1;
+
+#define VIDEO_ID 0x000001e0
+#define AUDIO_ID 0x000001c0
+        /* do a search for mpegps headers to be able to properly bias
+         * towards mpegps if we detect this stream as both. */
+        for (i = 0; i<p->buf_size; i++) {
+            code = (code << 8) + p->buf[i];
+            if ((code & 0xffffff00) == 0x100) {
+                if     ((code & 0x1f0) == VIDEO_ID) pes++;
+                else if((code & 0x1e0) == AUDIO_ID) pes++;
+            }
+        }
+
+        if (pes)
+            max_frames = (max_frames + pes - 1) / pes;
+    }
+    if      (max_frames >  500) return AVPROBE_SCORE_MAX / 2;
+    else if (max_frames >= 4)   return AVPROBE_SCORE_MAX / 4;
+    else if (max_frames >= 1)   return 1;
+    else                        return 0;
 //mpegps_mp3_unrecognized_format.mpg has max_frames=3
 }
 
@@ -111,8 +131,8 @@ static int mp3_parse_vbr_tags(AVFormatContext *s, AVStream *st, int64_t base)
         if(avio_rb16(s->pb) == 1) {
             /* skip delay and quality */
             avio_skip(s->pb, 4);
-            frames = avio_rb32(s->pb);
             size = avio_rb32(s->pb);
+            frames = avio_rb32(s->pb);
         }
     }
 
@@ -193,6 +213,6 @@ AVInputFormat ff_mp3_demuxer = {
     .read_probe     = mp3_read_probe,
     .read_header    = mp3_read_header,
     .read_packet    = mp3_read_packet,
-    .flags= AVFMT_GENERIC_INDEX,
-    .extensions = "mp2,mp3,m2a", /* XXX: use probe */
+    .flags          = AVFMT_GENERIC_INDEX,
+    .extensions     = "mp2,mp3,m2a", /* XXX: use probe */
 };

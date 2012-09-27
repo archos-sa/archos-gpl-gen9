@@ -41,6 +41,8 @@
 #include "libavutil/lfg.h"
 #include "avfilter.h"
 #include "drawutils.h"
+#include "formats.h"
+#include "video.h"
 
 #undef time
 
@@ -49,7 +51,7 @@
 #include FT_FREETYPE_H
 #include FT_GLYPH_H
 
-static const char *var_names[] = {
+static const char *const var_names[] = {
     "E",
     "PHI",
     "PI",
@@ -64,8 +66,8 @@ static const char *var_names[] = {
     NULL
 };
 
-static const char *fun2_names[] = {
-    "rand",
+static const char *const fun2_names[] = {
+    "rand"
 };
 
 static double drand(void *opaque, double min, double max)
@@ -122,6 +124,7 @@ typedef struct {
     short int draw_box;             ///< draw box around text - true or false
     int use_kerning;                ///< font kerning is used - true/false
     int tabsize;                    ///< tab size
+    int fix_bounds;                 ///< do we let it go out of frame bounds - t/f
 
     FT_Library library;             ///< freetype font library handle
     FT_Face face;                   ///< freetype font face handle
@@ -157,6 +160,8 @@ static const AVOption drawtext_options[]= {
 {"shadowy",  "set y",                OFFSET(shadowy),            AV_OPT_TYPE_INT,    {.dbl=0},     INT_MIN,  INT_MAX  },
 {"tabsize",  "set tab size",         OFFSET(tabsize),            AV_OPT_TYPE_INT,    {.dbl=4},     0,        INT_MAX  },
 {"draw",     "if false do not draw", OFFSET(d_expr),             AV_OPT_TYPE_STRING, {.str="1"},   CHAR_MIN, CHAR_MAX },
+{"fix_bounds", "if true, check and fix text coords to avoid clipping",
+                                     OFFSET(fix_bounds),         AV_OPT_TYPE_INT,    {.dbl=1},     0,        1        },
 
 /* FT_LOAD_* flags */
 {"ft_load_flags", "set font loading flags for libfreetype",   OFFSET(ft_load_flags),  AV_OPT_TYPE_FLAGS,  {.dbl=FT_LOAD_DEFAULT|FT_LOAD_RENDER}, 0, INT_MAX, 0, "ft_load_flags" },
@@ -392,7 +397,7 @@ static int query_formats(AVFilterContext *ctx)
         PIX_FMT_NONE
     };
 
-    avfilter_set_common_formats(ctx, avfilter_make_format_list(pix_fmts));
+    ff_set_common_formats(ctx, ff_make_format_list(pix_fmts));
     return 0;
 }
 
@@ -492,9 +497,11 @@ static int dtext_prepare_text(AVFilterContext *ctx)
         /* get glyph */
         dummy.code = code;
         glyph = av_tree_find(dtext->glyphs, &dummy, glyph_cmp, NULL);
-        if (!glyph)
+        if (!glyph) {
             ret = load_glyph(ctx, &glyph, code);
-        if (ret) return ret;
+            if (ret)
+                return ret;
+        }
 
         y_min = FFMIN(glyph->bbox.yMin, y_min);
         y_max = FFMAX(glyph->bbox.yMax, y_max);
@@ -548,7 +555,9 @@ static int dtext_prepare_text(AVFilterContext *ctx)
     y     = FFMIN(y + text_height, height - 1);
 
     dtext->w = str_w;
+    dtext->var_values[VAR_TEXT_W] = dtext->var_values[VAR_TW] = dtext->w;
     dtext->h = y;
+    dtext->var_values[VAR_TEXT_H] = dtext->var_values[VAR_TH] = dtext->h;
 
     return 0;
 }
@@ -824,12 +833,14 @@ static void start_frame(AVFilterLink *inlink, AVFilterBufferRef *inpicref)
     normalize_double(&dtext->x, dtext->var_values[VAR_X]);
     normalize_double(&dtext->y, dtext->var_values[VAR_Y]);
 
-    if (dtext->x < 0) dtext->x = 0;
-    if (dtext->y < 0) dtext->y = 0;
-    if ((unsigned)dtext->x + (unsigned)dtext->w > inlink->w)
-        dtext->x = inlink->w - dtext->w;
-    if ((unsigned)dtext->y + (unsigned)dtext->h > inlink->h)
-        dtext->y = inlink->h - dtext->h;
+    if (dtext->fix_bounds) {
+        if (dtext->x < 0) dtext->x = 0;
+        if (dtext->y < 0) dtext->y = 0;
+        if ((unsigned)dtext->x + (unsigned)dtext->w > inlink->w)
+            dtext->x = inlink->w - dtext->w;
+        if ((unsigned)dtext->y + (unsigned)dtext->h > inlink->h)
+            dtext->y = inlink->h - dtext->h;
+    }
 
     dtext->x &= ~((1 << dtext->hsub) - 1);
     dtext->y &= ~((1 << dtext->vsub) - 1);
@@ -838,7 +849,7 @@ static void start_frame(AVFilterLink *inlink, AVFilterBufferRef *inpicref)
             (int)dtext->var_values[VAR_N], dtext->var_values[VAR_T],
             dtext->x, dtext->y, dtext->x+dtext->w, dtext->y+dtext->h);
 
-    avfilter_start_frame(inlink->dst->outputs[0], inpicref);
+    ff_start_frame(inlink->dst->outputs[0], inpicref);
 }
 
 static void end_frame(AVFilterLink *inlink)
@@ -852,8 +863,8 @@ static void end_frame(AVFilterLink *inlink)
 
     dtext->var_values[VAR_N] += 1.0;
 
-    avfilter_draw_slice(outlink, 0, picref->video->h, 1);
-    avfilter_end_frame(outlink);
+    ff_draw_slice(outlink, 0, picref->video->h, 1);
+    ff_end_frame(outlink);
 }
 
 AVFilter avfilter_vf_drawtext = {
@@ -866,7 +877,7 @@ AVFilter avfilter_vf_drawtext = {
 
     .inputs    = (AVFilterPad[]) {{ .name             = "default",
                                     .type             = AVMEDIA_TYPE_VIDEO,
-                                    .get_video_buffer = avfilter_null_get_video_buffer,
+                                    .get_video_buffer = ff_null_get_video_buffer,
                                     .start_frame      = start_frame,
                                     .draw_slice       = null_draw_slice,
                                     .end_frame        = end_frame,

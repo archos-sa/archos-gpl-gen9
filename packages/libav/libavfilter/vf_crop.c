@@ -26,13 +26,15 @@
 /* #define DEBUG */
 
 #include "avfilter.h"
+#include "formats.h"
+#include "video.h"
 #include "libavutil/eval.h"
 #include "libavutil/avstring.h"
 #include "libavutil/libm.h"
 #include "libavutil/imgutils.h"
 #include "libavutil/mathematics.h"
 
-static const char *var_names[] = {
+static const char *const var_names[] = {
     "E",
     "PHI",
     "PI",
@@ -105,7 +107,7 @@ static int query_formats(AVFilterContext *ctx)
         PIX_FMT_NONE
     };
 
-    avfilter_set_common_formats(ctx, avfilter_make_format_list(pix_fmts));
+    ff_set_common_formats(ctx, ff_make_format_list(pix_fmts));
 
     return 0;
 }
@@ -272,7 +274,8 @@ static void start_frame(AVFilterLink *link, AVFilterBufferRef *picref)
     ref2->data[0] += crop->y * ref2->linesize[0];
     ref2->data[0] += crop->x * crop->max_step[0];
 
-    if (!(av_pix_fmt_descriptors[link->format].flags & PIX_FMT_PAL)) {
+    if (!(av_pix_fmt_descriptors[link->format].flags & PIX_FMT_PAL ||
+          av_pix_fmt_descriptors[link->format].flags & PIX_FMT_PSEUDOPAL)) {
         for (i = 1; i < 3; i ++) {
             if (ref2->data[i]) {
                 ref2->data[i] += (crop->y >> crop->vsub) * ref2->linesize[i];
@@ -287,7 +290,7 @@ static void start_frame(AVFilterLink *link, AVFilterBufferRef *picref)
         ref2->data[3] += crop->x * crop->max_step[3];
     }
 
-    avfilter_start_frame(link->dst->outputs[0], ref2);
+    ff_start_frame(link->dst->outputs[0], ref2);
 }
 
 static void draw_slice(AVFilterLink *link, int y, int h, int slice_dir)
@@ -305,7 +308,7 @@ static void draw_slice(AVFilterLink *link, int y, int h, int slice_dir)
     if (y + h > crop->y + crop->h)
         h = crop->y + crop->h - y;
 
-    avfilter_draw_slice(ctx->outputs[0], y - crop->y, h, slice_dir);
+    ff_draw_slice(ctx->outputs[0], y - crop->y, h, slice_dir);
 }
 
 static void end_frame(AVFilterLink *link)
@@ -314,7 +317,7 @@ static void end_frame(AVFilterLink *link)
 
     crop->var_values[VAR_N] += 1.0;
     avfilter_unref_buffer(link->cur_buf);
-    avfilter_end_frame(link->dst->outputs[0]);
+    ff_end_frame(link->dst->outputs[0]);
 }
 
 AVFilter avfilter_vf_crop = {
@@ -332,7 +335,7 @@ AVFilter avfilter_vf_crop = {
                                     .start_frame      = start_frame,
                                     .draw_slice       = draw_slice,
                                     .end_frame        = end_frame,
-                                    .get_video_buffer = avfilter_null_get_video_buffer,
+                                    .get_video_buffer = ff_null_get_video_buffer,
                                     .config_props     = config_input, },
                                   { .name = NULL}},
     .outputs   = (AVFilterPad[]) {{ .name             = "default",

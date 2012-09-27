@@ -22,6 +22,7 @@
 #include "libavutil/intreadwrite.h"
 #include "libavutil/imgutils.h"
 #include "avcodec.h"
+#include "internal.h"
 
 typedef struct DPXContext {
     AVFrame picture;
@@ -99,15 +100,23 @@ static void encode_rgb48_10bit(AVCodecContext *avctx, const AVPicture *pic,
     }
 }
 
-static int encode_frame(AVCodecContext *avctx, unsigned char *buf,
-                        int buf_size, void *data)
+static int encode_frame(AVCodecContext *avctx, AVPacket *pkt,
+                        const AVFrame *frame, int *got_packet)
 {
     DPXContext *s = avctx->priv_data;
-    int size;
+    int size, ret;
+    uint8_t *buf;
 
 #define HEADER_SIZE 1664  /* DPX Generic header */
-    if (buf_size < HEADER_SIZE)
-        return -1;
+    if (s->bits_per_component == 10)
+        size = avctx->height * avctx->width * 4;
+    else
+        size = avpicture_get_size(avctx->pix_fmt, avctx->width, avctx->height);
+    if ((ret = ff_alloc_packet(pkt, size + HEADER_SIZE)) < 0) {
+        av_log(avctx, AV_LOG_ERROR, "Error getting output packet.\n");
+        return ret;
+    }
+    buf = pkt->data;
 
     memset(buf, 0, HEADER_SIZE);
 
@@ -117,7 +126,8 @@ static int encode_frame(AVCodecContext *avctx, unsigned char *buf,
     memcpy (buf +   8, "V1.0", 4);
     write32(buf +  20, 1); /* new image */
     write32(buf +  24, HEADER_SIZE);
-    memcpy (buf + 160, LIBAVCODEC_IDENT, FFMIN(sizeof(LIBAVCODEC_IDENT), 100));
+    if (!(avctx->flags & CODEC_FLAG_BITEXACT))
+        memcpy (buf + 160, LIBAVCODEC_IDENT, FFMIN(sizeof(LIBAVCODEC_IDENT), 100));
     write32(buf + 660, 0xFFFFFFFF); /* unencrypted */
 
     /* Image information header */
@@ -138,17 +148,14 @@ static int encode_frame(AVCodecContext *avctx, unsigned char *buf,
     switch (s->bits_per_component) {
     case 8:
     case 16:
-        size = avpicture_layout(data, avctx->pix_fmt,
+        size = avpicture_layout((const AVPicture*)frame, avctx->pix_fmt,
                                 avctx->width, avctx->height,
-                                buf + HEADER_SIZE, buf_size - HEADER_SIZE);
+                                buf + HEADER_SIZE, pkt->size - HEADER_SIZE);
         if (size < 0)
             return size;
         break;
     case 10:
-        size = avctx->height * avctx->width * 4;
-        if (buf_size < HEADER_SIZE + size)
-            return -1;
-        encode_rgb48_10bit(avctx, data, buf + HEADER_SIZE);
+        encode_rgb48_10bit(avctx, (const AVPicture*)frame, buf + HEADER_SIZE);
         break;
     default:
         av_log(avctx, AV_LOG_ERROR, "Unsupported bit depth: %d\n", s->bits_per_component);
@@ -158,7 +165,11 @@ static int encode_frame(AVCodecContext *avctx, unsigned char *buf,
     size += HEADER_SIZE;
 
     write32(buf + 16, size); /* file size */
-    return size;
+
+    pkt->flags |= AV_PKT_FLAG_KEY;
+    *got_packet = 1;
+
+    return 0;
 }
 
 AVCodec ff_dpx_encoder = {
@@ -167,7 +178,7 @@ AVCodec ff_dpx_encoder = {
     .id   = CODEC_ID_DPX,
     .priv_data_size = sizeof(DPXContext),
     .init   = encode_init,
-    .encode = encode_frame,
+    .encode2 = encode_frame,
     .pix_fmts = (const enum PixelFormat[]){
         PIX_FMT_RGB24,
         PIX_FMT_RGBA,

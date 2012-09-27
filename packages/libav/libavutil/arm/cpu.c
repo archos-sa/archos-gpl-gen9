@@ -21,5 +21,10 @@
 
 int ff_get_cpu_flags_arm(void)
 {
-    return HAVE_IWMMXT * AV_CPU_FLAG_IWMMXT;
+    return AV_CPU_FLAG_ARMV5TE * HAVE_ARMV5TE |
+           AV_CPU_FLAG_ARMV6   * HAVE_ARMV6   |
+           AV_CPU_FLAG_ARMV6T2 * HAVE_ARMV6T2 |
+           AV_CPU_FLAG_VFP     * HAVE_ARMVFP  |
+           AV_CPU_FLAG_VFPV3   * HAVE_VFPV3   |
+           AV_CPU_FLAG_NEON    * HAVE_NEON;
 }

@@ -140,7 +140,7 @@ static int udp_leave_multicast_group(int sockfd, struct sockaddr *addr)
 static struct addrinfo* udp_resolve_host(const char *hostname, int port,
                                          int type, int family, int flags)
 {
-    struct addrinfo hints, *res = 0;
+    struct addrinfo hints = { 0 }, *res = 0;
     int error;
     char sport[16];
     const char *node = 0, *service = "0";
@@ -152,7 +152,6 @@ static struct addrinfo* udp_resolve_host(const char *hostname, int port,
     if ((hostname) && (hostname[0] != '\0') && (hostname[0] != '?')) {
         node = hostname;
     }
-    memset(&hints, 0, sizeof(hints));
     hints.ai_socktype = type;
     hints.ai_family   = family;
     hints.ai_flags = flags;
@@ -380,26 +379,32 @@ static int udp_open(URLContext *h, const char *uri, int flags)
             goto fail;
     }
 
-    /* the bind is needed to give a port to the socket now */
-    /* if multicast, try the multicast address bind first */
-    if (s->is_multicast && (h->flags & AVIO_FLAG_READ)) {
+    /* If multicast, try binding the multicast address first, to avoid
+     * receiving UDP packets from other sources aimed at the same UDP
+     * port. This fails on windows. This makes sending to the same address
+     * using sendto() fail, so only do it if we're opened in read-only mode. */
+    if (s->is_multicast && !(h->flags & AVIO_FLAG_WRITE)) {
         bind_ret = bind(udp_fd,(struct sockaddr *)&s->dest_addr, len);
     }
     /* bind to the local address if not multicast or if the multicast
      * bind failed */
-    if (bind_ret < 0 && bind(udp_fd,(struct sockaddr *)&my_addr, len) < 0)
+    /* the bind is needed to give a port to the socket now */
+    if (bind_ret < 0 && bind(udp_fd,(struct sockaddr *)&my_addr, len) < 0) {
+        av_log(h, AV_LOG_ERROR, "bind failed: %s\n", strerror(errno));
         goto fail;
+    }
 
     len = sizeof(my_addr);
     getsockname(udp_fd, (struct sockaddr *)&my_addr, &len);
     s->local_port = udp_port(&my_addr, len);
 
     if (s->is_multicast) {
-        if (!(h->flags & AVIO_FLAG_READ)) {
+        if (h->flags & AVIO_FLAG_WRITE) {
             /* output */
             if (udp_set_multicast_ttl(udp_fd, s->ttl, (struct sockaddr *)&s->dest_addr) < 0)
                 goto fail;
-        } else {
+        }
+        if (h->flags & AVIO_FLAG_READ) {
             /* input */
             if (udp_join_multicast_group(udp_fd, (struct sockaddr *)&s->dest_addr) < 0)
                 goto fail;

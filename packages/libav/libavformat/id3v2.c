@@ -25,6 +25,7 @@
 #include "libavutil/intreadwrite.h"
 #include "libavutil/dict.h"
 #include "avio_internal.h"
+#include "internal.h"
 
 const AVMetadataConv ff_id3v2_34_metadata_conv[] = {
     { "TALB", "album"},
@@ -84,6 +85,39 @@ const char ff_id3v2_4_tags[][4] = {
 const char ff_id3v2_3_tags[][4] = {
    "TDAT", "TIME", "TORY", "TRDA", "TSIZ", "TYER",
    { 0 },
+};
+
+const char *ff_id3v2_picture_types[21] = {
+    "Other",
+    "32x32 pixels 'file icon'",
+    "Other file icon",
+    "Cover (front)",
+    "Cover (back)",
+    "Leaflet page",
+    "Media (e.g. label side of CD)",
+    "Lead artist/lead performer/soloist",
+    "Artist/performer",
+    "Conductor",
+    "Band/Orchestra",
+    "Composer",
+    "Lyricist/text writer",
+    "Recording Location",
+    "During recording",
+    "During performance",
+    "Movie/video screen capture",
+    "A bright coloured fish",
+    "Illustration",
+    "Band/artist logotype",
+    "Publisher/Studio logotype",
+};
+
+const CodecMime ff_id3v2_mime_tags[] = {
+    {"image/gif" , CODEC_ID_GIF},
+    {"image/jpeg", CODEC_ID_MJPEG},
+    {"image/jpg",  CODEC_ID_MJPEG},
+    {"image/png" , CODEC_ID_PNG},
+    {"image/tiff", CODEC_ID_TIFF},
+    {"",           CODEC_ID_NONE},
 };
 
 int ff_id3v2_match(const uint8_t *buf, const char * magic)
@@ -381,6 +415,84 @@ finish:
         av_dict_set(m, "date", date, 0);
 }
 
+static void free_apic(void *obj)
+{
+    ID3v2ExtraMetaAPIC *apic = obj;
+    av_freep(&apic->data);
+    av_freep(&apic->description);
+    av_freep(&apic);
+}
+
+static void read_apic(AVFormatContext *s, AVIOContext *pb, int taglen, char *tag, ID3v2ExtraMeta **extra_meta)
+{
+    int enc, pic_type;
+    char             mimetype[64];
+    const CodecMime     *mime = ff_id3v2_mime_tags;
+    enum CodecID           id = CODEC_ID_NONE;
+    ID3v2ExtraMetaAPIC  *apic = NULL;
+    ID3v2ExtraMeta *new_extra = NULL;
+    int64_t               end = avio_tell(pb) + taglen;
+
+    if (taglen <= 4)
+        goto fail;
+
+    new_extra = av_mallocz(sizeof(*new_extra));
+    apic      = av_mallocz(sizeof(*apic));
+    if (!new_extra || !apic)
+        goto fail;
+
+    enc = avio_r8(pb);
+    taglen--;
+
+    /* mimetype */
+    taglen -= avio_get_str(pb, taglen, mimetype, sizeof(mimetype));
+    while (mime->id != CODEC_ID_NONE) {
+        if (!strncmp(mime->str, mimetype, sizeof(mimetype))) {
+            id = mime->id;
+            break;
+        }
+        mime++;
+    }
+    if (id == CODEC_ID_NONE) {
+        av_log(s, AV_LOG_WARNING, "Unknown attached picture mimetype: %s, skipping.\n", mimetype);
+        goto fail;
+    }
+    apic->id = id;
+
+    /* picture type */
+    pic_type = avio_r8(pb);
+    taglen--;
+    if (pic_type < 0 || pic_type >= FF_ARRAY_ELEMS(ff_id3v2_picture_types)) {
+        av_log(s, AV_LOG_WARNING, "Unknown attached picture type %d.\n", pic_type);
+        pic_type = 0;
+    }
+    apic->type = ff_id3v2_picture_types[pic_type];
+
+    /* description and picture data */
+    if (decode_str(s, pb, enc, &apic->description, &taglen) < 0) {
+        av_log(s, AV_LOG_ERROR, "Error decoding attached picture description.\n");
+        goto fail;
+    }
+
+    apic->len   = taglen;
+    apic->data  = av_malloc(taglen);
+    if (!apic->data || avio_read(pb, apic->data, taglen) != taglen)
+        goto fail;
+
+    new_extra->tag    = "APIC";
+    new_extra->data   = apic;
+    new_extra->next   = *extra_meta;
+    *extra_meta       = new_extra;
+
+    return;
+
+fail:
+    if (apic)
+        free_apic(apic);
+    av_freep(&new_extra);
+    avio_seek(pb, end, SEEK_SET);
+}
+
 typedef struct ID3v2EMFunc {
     const char *tag3;
     const char *tag4;
@@ -390,6 +502,7 @@ typedef struct ID3v2EMFunc {
 
 static const ID3v2EMFunc id3v2_extra_meta_funcs[] = {
     { "GEO", "GEOB", read_geobtag, free_geobtag },
+    { "PIC", "APIC", read_apic,    free_apic },
     { NULL }
 };
 
@@ -448,8 +561,17 @@ static void ff_id3v2_parse(AVFormatContext *s, int len, uint8_t version, uint8_t
 
     unsync = flags & 0x80;
 
-    if (isv34 && flags & 0x40) /* Extended header present, just skip over it */
-        avio_skip(s->pb, get_size(s->pb, 4));
+    if (isv34 && flags & 0x40) { /* Extended header present, just skip over it */
+        int extlen = get_size(s->pb, 4);
+        if (version == 4)
+            extlen -= 4;     // in v2.4 the length includes the length field we just read
+
+        if (extlen < 0) {
+            reason = "invalid extended header length";
+            goto error;
+        }
+        avio_skip(s->pb, extlen);
+    }
 
     while (len >= taghdrlen) {
         unsigned int tflags = 0;
@@ -541,7 +663,7 @@ seek:
     return;
 }
 
-void ff_id3v2_read_all(AVFormatContext *s, const char *magic, ID3v2ExtraMeta **extra_meta)
+void ff_id3v2_read(AVFormatContext *s, const char *magic, ID3v2ExtraMeta **extra_meta)
 {
     int len, ret;
     uint8_t buf[ID3v2_HEADER_SIZE];
@@ -572,11 +694,6 @@ void ff_id3v2_read_all(AVFormatContext *s, const char *magic, ID3v2ExtraMeta **e
     merge_date(&s->metadata);
 }
 
-void ff_id3v2_read(AVFormatContext *s, const char *magic)
-{
-    ff_id3v2_read_all(s, magic, NULL);
-}
-
 void ff_id3v2_free_extra_meta(ID3v2ExtraMeta **extra_meta)
 {
     ID3v2ExtraMeta *current = *extra_meta, *next;
@@ -589,4 +706,39 @@ void ff_id3v2_free_extra_meta(ID3v2ExtraMeta **extra_meta)
         av_freep(&current);
         current = next;
     }
+}
+
+int ff_id3v2_parse_apic(AVFormatContext *s, ID3v2ExtraMeta **extra_meta)
+{
+    ID3v2ExtraMeta *cur;
+
+    for (cur = *extra_meta; cur; cur = cur->next) {
+        ID3v2ExtraMetaAPIC *apic;
+        AVStream *st;
+
+        if (strcmp(cur->tag, "APIC"))
+            continue;
+        apic = cur->data;
+
+        if (!(st = avformat_new_stream(s, NULL)))
+            return AVERROR(ENOMEM);
+
+        st->disposition      |= AV_DISPOSITION_ATTACHED_PIC;
+        st->codec->codec_type = AVMEDIA_TYPE_VIDEO;
+        st->codec->codec_id   = apic->id;
+        av_dict_set(&st->metadata, "title",   apic->description, 0);
+        av_dict_set(&st->metadata, "comment", apic->type, 0);
+
+        av_init_packet(&st->attached_pic);
+        st->attached_pic.data         = apic->data;
+        st->attached_pic.size         = apic->len;
+        st->attached_pic.destruct     = av_destruct_packet;
+        st->attached_pic.stream_index = st->index;
+        st->attached_pic.flags       |= AV_PKT_FLAG_KEY;
+
+        apic->data = NULL;
+        apic->len  = 0;
+    }
+
+    return 0;
 }

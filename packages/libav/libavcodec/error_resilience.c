@@ -66,7 +66,7 @@ static void decode_mb(MpegEncContext *s, int ref)
         ff_h264_hl_decode_mb(h);
     } else {
         assert(ref == 0);
-        MPV_decode_mb(s, s->block);
+        ff_MPV_decode_mb(s, s->block);
     }
 }
 
@@ -419,8 +419,13 @@ static void guess_mv(MpegEncContext *s)
     if ((!(s->avctx->error_concealment&FF_EC_GUESS_MVS)) ||
         num_avail <= mb_width / 2) {
         for (mb_y = 0; mb_y < s->mb_height; mb_y++) {
+            s->mb_x = 0;
+            s->mb_y = mb_y;
+            ff_init_block_index(s);
             for (mb_x = 0; mb_x < s->mb_width; mb_x++) {
                 const int mb_xy = mb_x + mb_y * s->mb_stride;
+
+                ff_update_block_index(s);
 
                 if (IS_INTRA(s->current_picture.f.mb_type[mb_xy]))
                     continue;
@@ -456,6 +461,9 @@ static void guess_mv(MpegEncContext *s)
 
             changed = 0;
             for (mb_y = 0; mb_y < s->mb_height; mb_y++) {
+                s->mb_x = 0;
+                s->mb_y = mb_y;
+                ff_init_block_index(s);
                 for (mb_x = 0; mb_x < s->mb_width; mb_x++) {
                     const int mb_xy        = mb_x + mb_y * s->mb_stride;
                     int mv_predictor[8][2] = { { 0 } };
@@ -466,6 +474,8 @@ static void guess_mv(MpegEncContext *s)
                     int best_pred          = 0;
                     const int mot_index    = (mb_x + mb_y * mot_stride) * mot_step;
                     int prev_x, prev_y, prev_ref;
+
+                    ff_update_block_index(s);
 
                     if ((mb_x ^ mb_y ^ pass) & 1)
                         continue;
@@ -592,7 +602,7 @@ skip_mean_and_median:
                         if (s->avctx->codec_id == CODEC_ID_H264) {
                             // FIXME
                         } else {
-                            ff_thread_await_progress((AVFrame *) s->last_picture_ptr,
+                            ff_thread_await_progress(&s->last_picture_ptr->f,
                                                      mb_y, 0);
                         }
                         if (!s->last_picture.f.motion_val[0] ||
@@ -763,7 +773,7 @@ static int is_intra_more_likely(MpegEncContext *s)
                 if (s->avctx->codec_id == CODEC_ID_H264) {
                     // FIXME
                 } else {
-                    ff_thread_await_progress((AVFrame *) s->last_picture_ptr,
+                    ff_thread_await_progress(&s->last_picture_ptr->f,
                                              mb_y, 0);
                 }
                 is_intra_likely += s->dsp.sad[0](NULL, last_mb_ptr, mb_ptr,
@@ -881,7 +891,7 @@ void ff_er_frame_end(MpegEncContext *s)
 
     /* We do not support ER of field pictures yet,
      * though it should not crash if enabled. */
-    if (!s->err_recognition || s->error_count == 0 || s->avctx->lowres ||
+    if (!s->err_recognition || s->error_count == 0                     ||
         s->avctx->hwaccel                                              ||
         s->avctx->codec->capabilities&CODEC_CAP_HWACCEL_VDPAU          ||
         s->picture_structure != PICT_FRAME                             ||
@@ -1072,10 +1082,15 @@ void ff_er_frame_end(MpegEncContext *s)
 
     /* handle inter blocks with damaged AC */
     for (mb_y = 0; mb_y < s->mb_height; mb_y++) {
+        s->mb_x = 0;
+        s->mb_y = mb_y;
+        ff_init_block_index(s);
         for (mb_x = 0; mb_x < s->mb_width; mb_x++) {
             const int mb_xy   = mb_x + mb_y * s->mb_stride;
             const int mb_type = s->current_picture.f.mb_type[mb_xy];
             int dir           = !s->last_picture.f.data[0];
+
+            ff_update_block_index(s);
 
             error = s->error_status_table[mb_xy];
 
@@ -1114,10 +1129,15 @@ void ff_er_frame_end(MpegEncContext *s)
     /* guess MVs */
     if (s->pict_type == AV_PICTURE_TYPE_B) {
         for (mb_y = 0; mb_y < s->mb_height; mb_y++) {
+            s->mb_x = 0;
+            s->mb_y = mb_y;
+            ff_init_block_index(s);
             for (mb_x = 0; mb_x < s->mb_width; mb_x++) {
                 int       xy      = mb_x * 2 + mb_y * 2 * s->b8_stride;
                 const int mb_xy   = mb_x + mb_y * s->mb_stride;
                 const int mb_type = s->current_picture.f.mb_type[mb_xy];
+
+                ff_update_block_index(s);
 
                 error = s->error_status_table[mb_xy];
 
@@ -1144,7 +1164,7 @@ void ff_er_frame_end(MpegEncContext *s)
                     if (s->avctx->codec_id == CODEC_ID_H264) {
                         // FIXME
                     } else {
-                        ff_thread_await_progress((AVFrame *) s->next_picture_ptr, mb_y, 0);
+                        ff_thread_await_progress(&s->next_picture_ptr->f, mb_y, 0);
                     }
                     s->mv[0][0][0] = s->next_picture.f.motion_val[0][xy][0] *  time_pb            / time_pp;
                     s->mv[0][0][1] = s->next_picture.f.motion_val[0][xy][1] *  time_pb            / time_pp;

@@ -310,7 +310,7 @@ static int truemotion1_decode_header(TrueMotion1Context *s)
     int width_shift = 0;
     int new_pix_fmt;
     struct frame_header header;
-    uint8_t header_buffer[128];  /* logical maximum size of the header */
+    uint8_t header_buffer[128] = { 0 };  /* logical maximum size of the header */
     const uint8_t *sel_vector_table;
 
     header.header_size = ((s->buf[0] >> 5) | (s->buf[0] << 3)) & 0x7f;
@@ -321,7 +321,6 @@ static int truemotion1_decode_header(TrueMotion1Context *s)
     }
 
     /* unscramble the header bytes with a XOR operation */
-    memset(header_buffer, 0, 128);
     for (i = 1; i < header.header_size; i++)
         header_buffer[i - 1] = s->buf[i] ^ s->buf[i + 1];
 
@@ -355,14 +354,7 @@ static int truemotion1_decode_header(TrueMotion1Context *s)
     if (s->flags & FLAG_SPRITE) {
         av_log_ask_for_sample(s->avctx, "SPRITE frame found.\n");
         /* FIXME header.width, height, xoffset and yoffset aren't initialized */
-#if 0
-        s->w = header.width;
-        s->h = header.height;
-        s->x = header.xoffset;
-        s->y = header.yoffset;
-#else
         return -1;
-#endif
     } else {
         s->w = header.xsize;
         s->h = header.ysize;
@@ -900,5 +892,5 @@ AVCodec ff_truemotion1_decoder = {
     .close          = truemotion1_decode_end,
     .decode         = truemotion1_decode_frame,
     .capabilities   = CODEC_CAP_DR1,
-    .long_name = NULL_IF_CONFIG_SMALL("Duck TrueMotion 1.0"),
+    .long_name      = NULL_IF_CONFIG_SMALL("Duck TrueMotion 1.0"),
 };

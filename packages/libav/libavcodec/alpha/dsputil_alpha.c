@@ -268,7 +268,7 @@ static void put_pixels16_axp_asm(uint8_t *block, const uint8_t *pixels,
     put_pixels_axp_asm(block + 8, pixels + 8, line_size, h);
 }
 
-void dsputil_init_alpha(DSPContext* c, AVCodecContext *avctx)
+void ff_dsputil_init_alpha(DSPContext* c, AVCodecContext *avctx)
 {
     const int high_bit_depth = avctx->bits_per_raw_sample > 8;
 
@@ -336,7 +336,7 @@ void dsputil_init_alpha(DSPContext* c, AVCodecContext *avctx)
     put_pixels_clamped_axp_p = c->put_pixels_clamped;
     add_pixels_clamped_axp_p = c->add_pixels_clamped;
 
-    if (!avctx->lowres && avctx->bits_per_raw_sample <= 8 &&
+    if (avctx->bits_per_raw_sample <= 8 &&
         (avctx->idct_algo == FF_IDCT_AUTO ||
          avctx->idct_algo == FF_IDCT_SIMPLEALPHA)) {
         c->idct_put = ff_simple_idct_put_axp;

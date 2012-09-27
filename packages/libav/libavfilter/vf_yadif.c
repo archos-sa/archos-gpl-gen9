@@ -23,6 +23,9 @@
 #include "libavutil/common.h"
 #include "libavutil/pixdesc.h"
 #include "avfilter.h"
+#include "formats.h"
+#include "internal.h"
+#include "video.h"
 #include "yadif.h"
 
 #undef NDEBUG
@@ -61,6 +64,7 @@ typedef struct {
                         int w, int prefs, int mrefs, int parity, int mode);
 
     const AVPixFmtDescriptor *csp;
+    int eof;
 } YADIFContext;
 
 #define CHECK(j)\
@@ -179,7 +183,7 @@ static AVFilterBufferRef *get_video_buffer(AVFilterLink *link, int perms, int w,
     int height= FFALIGN(h+2, 32);
     int i;
 
-    picref = avfilter_default_get_video_buffer(link, perms, width, height);
+    picref = ff_default_get_video_buffer(link, perms, width, height);
 
     picref->video->w = w;
     picref->video->h = h;
@@ -218,18 +222,18 @@ static void return_frame(AVFilterContext *ctx, int is_second)
     filter(ctx, yadif->out, tff ^ !is_second, tff);
 
     if (is_second) {
-        if (yadif->next->pts != AV_NOPTS_VALUE &&
-            yadif->cur->pts != AV_NOPTS_VALUE) {
-            yadif->out->pts =
-                (yadif->next->pts&yadif->cur->pts) +
-                ((yadif->next->pts^yadif->cur->pts)>>1);
+        int64_t cur_pts  = yadif->cur->pts;
+        int64_t next_pts = yadif->next->pts;
+
+        if (next_pts != AV_NOPTS_VALUE && cur_pts != AV_NOPTS_VALUE) {
+            yadif->out->pts = cur_pts + next_pts;
         } else {
             yadif->out->pts = AV_NOPTS_VALUE;
         }
-        avfilter_start_frame(ctx->outputs[0], yadif->out);
+        ff_start_frame(ctx->outputs[0], yadif->out);
     }
-    avfilter_draw_slice(ctx->outputs[0], 0, link->h, 1);
-    avfilter_end_frame(ctx->outputs[0]);
+    ff_draw_slice(ctx->outputs[0], 0, link->h, 1);
+    ff_end_frame(ctx->outputs[0]);
 
     yadif->frame_pending = (yadif->mode&1) && !is_second;
 }
@@ -255,7 +259,9 @@ static void start_frame(AVFilterLink *link, AVFilterBufferRef *picref)
         yadif->out  = avfilter_ref_buffer(yadif->cur, AV_PERM_READ);
         avfilter_unref_buffer(yadif->prev);
         yadif->prev = NULL;
-        avfilter_start_frame(ctx->outputs[0], yadif->out);
+        if (yadif->out->pts != AV_NOPTS_VALUE)
+            yadif->out->pts *= 2;
+        ff_start_frame(ctx->outputs[0], yadif->out);
         return;
     }
 
@@ -267,7 +273,9 @@ static void start_frame(AVFilterLink *link, AVFilterBufferRef *picref)
 
     avfilter_copy_buffer_ref_props(yadif->out, yadif->cur);
     yadif->out->video->interlaced = 0;
-    avfilter_start_frame(ctx->outputs[0], yadif->out);
+    if (yadif->out->pts != AV_NOPTS_VALUE)
+        yadif->out->pts *= 2;
+    ff_start_frame(ctx->outputs[0], yadif->out);
 }
 
 static void end_frame(AVFilterLink *link)
@@ -279,8 +287,8 @@ static void end_frame(AVFilterLink *link)
         return;
 
     if (yadif->auto_enable && !yadif->cur->video->interlaced) {
-        avfilter_draw_slice(ctx->outputs[0], 0, link->h, 1);
-        avfilter_end_frame(ctx->outputs[0]);
+        ff_draw_slice(ctx->outputs[0], 0, link->h, 1);
+        ff_end_frame(ctx->outputs[0]);
         return;
     }
 
@@ -300,8 +308,21 @@ static int request_frame(AVFilterLink *link)
     do {
         int ret;
 
-        if ((ret = avfilter_request_frame(link->src->inputs[0])))
+        if (yadif->eof)
+            return AVERROR_EOF;
+
+        ret  = ff_request_frame(link->src->inputs[0]);
+
+        if (ret == AVERROR_EOF && yadif->next) {
+            AVFilterBufferRef *next = avfilter_ref_buffer(yadif->next, AV_PERM_READ);
+            next->pts = yadif->next->pts * 2 - yadif->cur->pts;
+
+            start_frame(link->src->inputs[0], next);
+            end_frame(link->src->inputs[0]);
+            yadif->eof = 1;
+        } else if (ret < 0) {
             return ret;
+        }
     } while (!yadif->cur);
 
     return 0;
@@ -315,12 +336,16 @@ static int poll_frame(AVFilterLink *link)
     if (yadif->frame_pending)
         return 1;
 
-    val = avfilter_poll_frame(link->src->inputs[0]);
+    val = ff_poll_frame(link->src->inputs[0]);
+    if (val <= 0)
+        return val;
 
     if (val==1 && !yadif->next) { //FIXME change API to not requre this red tape
-        if ((ret = avfilter_request_frame(link->src->inputs[0])) < 0)
+        if ((ret = ff_request_frame(link->src->inputs[0])) < 0)
             return ret;
-        val = avfilter_poll_frame(link->src->inputs[0]);
+        val = ff_poll_frame(link->src->inputs[0]);
+        if (val <= 0)
+            return val;
     }
     assert(yadif->next || !val);
 
@@ -364,7 +389,7 @@ static int query_formats(AVFilterContext *ctx)
         PIX_FMT_NONE
     };
 
-    avfilter_set_common_formats(ctx, avfilter_make_format_list(pix_fmts));
+    ff_set_common_formats(ctx, ff_make_format_list(pix_fmts));
 
     return 0;
 }
@@ -372,7 +397,7 @@ static int query_formats(AVFilterContext *ctx)
 static av_cold int init(AVFilterContext *ctx, const char *args, void *opaque)
 {
     YADIFContext *yadif = ctx->priv;
-    av_unused int cpu_flags = av_get_cpu_flags();
+    int cpu_flags = av_get_cpu_flags();
 
     yadif->mode = 0;
     yadif->parity = -1;
@@ -396,6 +421,16 @@ static av_cold int init(AVFilterContext *ctx, const char *args, void *opaque)
 
 static void null_draw_slice(AVFilterLink *link, int y, int h, int slice_dir) { }
 
+static int config_props(AVFilterLink *link)
+{
+    link->time_base.num = link->src->inputs[0]->time_base.num;
+    link->time_base.den = link->src->inputs[0]->time_base.den * 2;
+    link->w             = link->src->inputs[0]->w;
+    link->h             = link->src->inputs[0]->h;
+
+    return 0;
+}
+
 AVFilter avfilter_vf_yadif = {
     .name          = "yadif",
     .description   = NULL_IF_CONFIG_SMALL("Deinterlace the input image"),
@@ -416,6 +451,7 @@ AVFilter avfilter_vf_yadif = {
     .outputs   = (AVFilterPad[]) {{ .name             = "default",
                                     .type             = AVMEDIA_TYPE_VIDEO,
                                     .poll_frame       = poll_frame,
-                                    .request_frame    = request_frame, },
+                                    .request_frame    = request_frame,
+                                    .config_props     = config_props, },
                                   { .name = NULL}},
 };
