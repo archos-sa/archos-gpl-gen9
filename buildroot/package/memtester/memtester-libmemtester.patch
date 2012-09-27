@@ -1,0 +1,208 @@
+diff -Nur memtester-4.3.0/conf-cc memtester-4.3.0-updated/conf-cc
+--- memtester-4.3.0/conf-cc	2012-06-09 23:45:22.000000000 +0200
++++ memtester-4.3.0-updated/conf-cc	2012-08-22 10:47:11.528800506 +0200
+@@ -1,3 +1,3 @@
+-cc -O2 -DPOSIX -D_POSIX_C_SOURCE=200809L -D_FILE_OFFSET_BITS=64 -DTEST_NARROW_WRITES -c
++cc -W -Wall -O2 -DPOSIX -D_POSIX_C_SOURCE=200809L -D_FILE_OFFSET_BITS=64 -DTEST_NARROW_WRITES -DMEMTESTER_LIB -c
+ 
+ This will be used to compile .c files.
+Les fichiers binaires memtester-4.3.0/libmemtester.a et memtester-4.3.0-updated/libmemtester.a sont différents
+diff -Nur memtester-4.3.0/Makefile memtester-4.3.0-updated/Makefile
+--- memtester-4.3.0/Makefile	2012-06-09 23:45:22.000000000 +0200
++++ memtester-4.3.0-updated/Makefile	2012-08-21 17:39:13.292807866 +0200
+@@ -73,6 +73,9 @@
+ clean:
+ 	rm -f memtester $(TARGETS) $(OBJECTS) core
+ 
++libmemtester.a: $(OBJECTS) memtester.c conf-cc Makefile load extra-libs
++	ar rcs libmemtester.a $^
++
+ memtester: \
+ $(OBJECTS) memtester.c tests.h tests.c tests.h conf-cc Makefile load extra-libs
+ 	./load memtester tests.o `cat extra-libs`
+diff -Nur memtester-4.3.0/memtester.c memtester-4.3.0-updated/memtester.c
+--- memtester-4.3.0/memtester.c	2012-06-09 23:45:22.000000000 +0200
++++ memtester-4.3.0-updated/memtester.c	2012-08-22 10:49:47.896800489 +0200
+@@ -107,6 +107,7 @@
+     exit(EXIT_FAIL_NONSTARTER);
+ }
+ 
++#ifndef MEMTESTER_LIB
+ int main(int argc, char **argv) {
+     ul loops, loop, i;
+     size_t pagesize, wantraw, wantmb, wantbytes, wantbytes_orig, bufsize,
+@@ -401,3 +402,161 @@
+     fflush(stdout);
+     exit(exit_code);
+ }
++
++#else
++void volatile *aligned;
++size_t bufsize, count;
++ul testmask = 0;
++ulv *bufa, *bufb;
++int do_mlock = 1;
++
++int memtester_prepare(unsigned long memory)
++{
++	size_t pagesize, wantmb, wantbytes, wantbytes_orig, halflen;
++	ptrdiff_t pagesizemask;
++	void volatile *buf;
++	int done_mem = 0;
++	int exit_code = 0;
++	size_t maxbytes = -1; /* addressable memory, in bytes */
++	size_t maxmb = (maxbytes >> 20) + 1; /* addressable memory, in MB */
++	/* Device to mmap memory from with -p, default is normal core */
++	char *env_testmask = 0;
++
++	check_posix_system();
++	pagesize = memtester_pagesize();
++	pagesizemask = (ptrdiff_t) ~(pagesize - 1);
++	printf("pagesizemask is 0x%tx\n", pagesizemask);
++
++	/* If MEMTESTER_TEST_MASK is set, we use its value as a mask of which
++	   tests we run.
++	   */
++	if ((env_testmask = getenv("MEMTESTER_TEST_MASK"))) {
++		errno = 0;
++		testmask = strtoul(env_testmask, 0, 0);
++		if (errno) {
++			fprintf(stderr, "error parsing MEMTESTER_TEST_MASK %s: %s\n", 
++					env_testmask, strerror(errno));
++		}
++		printf("using testmask 0x%lx\n", testmask);
++	}
++
++	if (memory <= 0)
++		return -1;
++
++	errno = 0;
++	wantbytes_orig = wantbytes = (size_t)memory;//(size_t) wantraw << memshift);
++	wantmb = (wantbytes_orig >> 20);
++	optind++;
++	if (wantmb > maxmb) {
++		fprintf(stderr, "This system can only address %llu MB.\n", (ull) maxmb);
++		exit(EXIT_FAIL_NONSTARTER);
++	}
++	if (wantbytes < pagesize) {
++		fprintf(stderr, "bytes %ld < pagesize %ld -- memory argument too large?\n",
++				wantbytes, pagesize);
++		exit(EXIT_FAIL_NONSTARTER);
++	}
++
++	printf("want %lluMB (%llu bytes)\n", (ull) wantmb, (ull) wantbytes);
++	buf = NULL;
++
++	while (!done_mem) {
++		while (!buf && wantbytes) {
++			buf = (void volatile *) malloc(wantbytes);
++			if (!buf) wantbytes -= pagesize;
++		}
++		bufsize = wantbytes;
++		printf("got  %lluMB (%llu bytes)", (ull) wantbytes >> 20,
++				(ull) wantbytes);
++		fflush(stdout);
++		if (do_mlock) {
++			printf(", trying mlock ...");
++			fflush(stdout);
++			if ((size_t) buf % pagesize) {
++				/* printf("aligning to page -- was 0x%tx\n", buf); */
++				aligned = (void volatile *) ((size_t) buf & pagesizemask) + pagesize;
++				/* printf("  now 0x%tx -- lost %d bytes\n", aligned,
++				 *      (size_t) aligned - (size_t) buf);
++				 */
++				bufsize -= ((size_t) aligned - (size_t) buf);
++			} else {
++				aligned = buf;
++			}
++			/* Try mlock */
++			if (mlock((void *) aligned, bufsize) < 0) {
++				switch(errno) {
++					case EAGAIN: /* BSDs */
++						printf("over system/pre-process limit, reducing...\n");
++						free((void *) buf);
++						buf = NULL;
++						wantbytes -= pagesize;
++						break;
++					case ENOMEM:
++						printf("too many pages, reducing...\n");
++						free((void *) buf);
++						buf = NULL;
++						wantbytes -= pagesize;
++						break;
++					case EPERM:
++						printf("insufficient permission.\n");
++						printf("Trying again, unlocked:\n");
++						do_mlock = 0;
++						free((void *) buf);
++						buf = NULL;
++						wantbytes = wantbytes_orig;
++						break;
++					default:
++						printf("failed for unknown reason.\n");
++						do_mlock = 0;
++						done_mem = 1;
++				}
++			} else {
++				printf("locked.\n");
++				done_mem = 1;
++			}
++		} else {
++			done_mem = 1;
++			printf("\n");
++		}
++	}
++
++	if (!do_mlock) fprintf(stderr, "Continuing with unlocked memory; testing "
++                        "will be slower and less reliable.\n");
++
++	halflen = bufsize / 2;
++	count = halflen / sizeof(ul);
++	bufa = (ulv *) aligned;
++	bufb = (ulv *) ((size_t) aligned + halflen);
++
++	return exit_code;
++}
++
++void memtester_end()
++{
++	if (do_mlock) munlock((void *) aligned, bufsize);
++}
++
++int memtester_do_loop()
++{
++	int exit_code = 0;
++	int i;
++
++	if (test_stuck_address(aligned, bufsize / sizeof(ul)))
++		exit_code |= EXIT_FAIL_ADDRESSLINES;
++
++	for (i=0;;i++) {
++		if (!tests[i].name)
++			break;
++		/* If using a custom testmask, only run this test if the
++		   bit corresponding to this test was set by the user.
++		   */
++		if (testmask && (!((1 << i) & testmask)))
++			continue;
++
++		if (tests[i].fp(bufa, bufb, count))
++			exit_code |= EXIT_FAIL_OTHERTEST;
++	}
++
++	return exit_code;
++}
++#endif
+Les fichiers binaires memtester-4.3.0/.memtester.c.swp et memtester-4.3.0-updated/.memtester.c.swp sont différents
+diff -Nur memtester-4.3.0/memtester.h memtester-4.3.0-updated/memtester.h
+--- memtester-4.3.0/memtester.h	2012-06-09 23:45:22.000000000 +0200
++++ memtester-4.3.0-updated/memtester.h	2012-08-22 10:45:38.256800520 +0200
+@@ -20,3 +20,8 @@
+ extern int use_phys;
+ extern off_t physaddrbase;
+ 
++#ifdef MEMTESTER_LIB
++int memtester_prepare(unsigned long memory);
++int memtester_do_loop();
++void memtester_end();
++#endif

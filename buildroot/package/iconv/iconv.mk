@@ -38,12 +38,12 @@ $(TARGET_DIR)/usr/lib/libiconv.so.2: $(STAGING_DIR)/usr/lib/libiconv.la
 	$(INSTALL) $(STAGING_DIR)/usr/lib/libiconv_plug.so $(TARGET_DIR)/usr/lib
 	$(STRIPCMD) $(TARGET_DIR)/usr/lib/libiconv.so.2.1.0
 	$(STRIPCMD) $(TARGET_DIR)/usr/lib/libiconv_plug.so
-	ln -s libiconv.so.2.1.0 $(TARGET_DIR)/usr/lib/libiconv.so.2
-	ln -s libiconv.so.2.1.0 $(TARGET_DIR)/usr/lib/libiconv.so
+	ln -sf libiconv.so.2.1.0 $(TARGET_DIR)/usr/lib/libiconv.so.2
+	ln -sf libiconv.so.2.1.0 $(TARGET_DIR)/usr/lib/libiconv.so
 	$(INSTALL) $(STAGING_DIR)/usr/lib/libcharset.so.1.0.0 $(TARGET_DIR)/usr/lib
 	$(STRIPCMD) $(TARGET_DIR)/usr/lib/libcharset.so.1.0.0
-	ln -s libcharset.so.1.0.0 $(TARGET_DIR)/usr/lib/libcharset.so.1
-	ln -s libcharset.so.1.0.0 $(TARGET_DIR)/usr/lib/libcharset.so
+	ln -sf libcharset.so.1.0.0 $(TARGET_DIR)/usr/lib/libcharset.so.1
+	ln -sf libcharset.so.1.0.0 $(TARGET_DIR)/usr/lib/libcharset.so
 
 iconv: uclibc $(TARGET_DIR)/usr/lib/libiconv.so.2
 

@@ -8,8 +8,6 @@ SAMBA_SOURCE:=samba-$(SAMBA_VERSION).tar.gz
 SAMBA_SITE:=http://us1.samba.org/samba/ftp/stable/
 SAMBA_CAT:=zcat
 SAMBA_DIR:=$(BUILD_DIR)/samba-$(SAMBA_VERSION)
-SAMBA_FSMON_LIBRARY=sambafsmon.so.1.1.0
-SAMBA_TARGET_FSMON_LIBRARY:=usr/lib/$(SAMBA_FSMON_LIBRARY)
 
 #FIXME: OPT_TARGET_DIR needs to be set in buildroot!
 OPT_TARGET_DIR:=$(TARGET_DIR)/opt
@@ -23,43 +21,6 @@ else
 SAMBA_ARCH:=SAMBA_ARM
 endif
 
-# samba_fs_monitor
-.PHONY: samba_fs_monitor-install
-
-SFM_SOURCE_DIR:=../packages/samba_fs_monitor
-SFM_DIR:=$(BUILD_DIR)/samba_fs_monitor
-
-SFM_TARGET_DIR:=$(SAMBA_TARGET_DIR)
-
-$(SFM_DIR)/.unpacked:
-	@-rm -rf $(SFM_DIR) || true
-	cp -a $(SFM_SOURCE_DIR) $(SFM_DIR)
-	touch $(SFM_DIR)/.unpacked
-
-$(SFM_DIR)/.compiled: $(SFM_DIR)/.unpacked
-	(cd $(SFM_DIR); \
-	$(TARGET_CONFIGURE_OPTS) \
-	CFLAGS="$(TARGET_CFLAGS) -I$(STAGING_DIR)/usr/include" \
-	LDFLAGS="-L$(STAGING_DIR)/lib -L$(STAGING_DIR)/usr/lib \
-	  -Wl,-rpath-link,$(STAGING_DIR)/usr/lib \
-	  -Wl,-rpath,$(SAMBA_TARGET_DIR)/usr/lib" \
-	  $(MAKE) CC=$(TARGET_CC) );
-	touch $(SFM_DIR)/.compiled
-
-samba_fs_monitor-install: $(SFM_DIR)/.compiled
-	install -D $(SFM_DIR)/sambafsmon.so.1.0.1 $(SFM_TARGET_DIR)/usr/lib/sambafsmon.so.1.0.1
-	install -D $(SFM_DIR)/smbdhelper $(SFM_TARGET_DIR)/usr/sbin/smbdhelper
-
-samba_fs_monitor: samba_fs_monitor-install
-
-samba_fs_monitor-clean:
-	-$(MAKE) -C $(SFM_DIR) clean
-	-rm $(SFM_DIR)/.compiled
-
-samba_fs_monitor-dirclean: samba_fs_monitor-clean
-	-rm -rf $(SFM_DIR)
-
-
 $(DL_DIR)/$(SAMBA_SOURCE):
 	$(WGET) -P $(DL_DIR) $(SAMBA_SITE)/$(SAMBA_SOURCE)
 
@@ -67,7 +28,6 @@ samba-source: $(DL_DIR)/$(SAMBA_SOURCE)
 
 $(SAMBA_DIR)/.unpacked: $(DL_DIR)/$(SAMBA_SOURCE)
 	$(SAMBA_CAT) $(DL_DIR)/$(SAMBA_SOURCE) | tar -C $(BUILD_DIR) $(TAR_OPTIONS) -
-	cp package/samba/wrapper.c $(SAMBA_DIR)/
 	toolchain/patch-kernel.sh $(SAMBA_DIR) package/samba/ \*.patch
 	touch $@
 
@@ -143,14 +103,6 @@ $(SAMBA_DIR)/.configured: $(SAMBA_DIR)/.unpacked
 	echo "#define _GNU_SOURCE 1" >> $(SAMBA_DIR)/source/include/config.h
 	touch $@
 
-$(SAMBA_DIR)/$(SAMBA_FSMON_LIBRARY): $(SAMBA_DIR)/.unpacked
-	$(TARGET_CC) -DLOG_FILE=\"/tmp/samba_write.log\" -fPIC -rdynamic -g -c -Wall $(SAMBA_DIR)/wrapper.c -o $(SAMBA_DIR)/wrapper.o
-	$(TARGET_CC) -shared -Wl,-soname,sambafsmon.so.1 -o $(SAMBA_DIR)/$(SAMBA_FSMON_LIBRARY) $(SAMBA_DIR)/wrapper.o -lc -ldl
-
-$(TARGET_DIR)/$(SAMBA_TARGET_FSMON_LIBRARY): $(SAMBA_DIR)/$(SAMBA_FSMON_LIBRARY)
-	cp -dpf $(SAMBA_DIR)/$(SAMBA_FSMON_LIBRARY) \
-		$(TARGET_DIR)/$(SAMBA_TARGET_FSMON_LIBRARY)
-
 # there were problems with the dynamic libraries on arm
 # they went away after disabling PIE.
 
@@ -189,22 +141,19 @@ endif
 	-$(STRIPCMD) --strip-unneeded $(SAMBA_TARGET_DIR)/usr/lib/libsmbclient.so
 	-$(STRIPCMD) --strip-unneeded $(SAMBA_TARGET_DIR)/usr/sbin/nmbd
 	-$(STRIPCMD) --strip-unneeded $(SAMBA_TARGET_DIR)/usr/sbin/smbd
-	$(INSTALL) -m 0755 package/samba/smbd_helper.sh $(TARGET_DIR)/usr/sbin
 
 # TODO: add the necessary directories on the target fs.
 # TODO: figure out to compile/install only the nedded subset of samba
 # TODO: find out how to strip more features from samba
 
-samba: uclibc $(TARGET_DIR)/$(SAMBA_TARGET_FSMON_LIBRARY) $(SAMBA_TARGET_DIR)/usr/sbin/smbd
+samba: uclibc $(SAMBA_TARGET_DIR)/usr/sbin/smbd
 
 samba-clean:
 	-rm -r $(SAMBA_DIR)/.install/
 	-rm $(SAMBA_DIR)/.compiled
 	-rm $(SAMBA_DIR)/.configured
-	-rm -f $(TARGET_DIR)/$(SAMBA_TARGET_FSMON_LIBRARY)
 	-rm -f $(SAMBA_TARGET_DIR)/usr/sbin/{smbd,nmbd}
 	-rm -f $(SAMBA_TARGET_DIR)/usr/lib/libsmbclient.so
-	rm -f $(SAMBA_DIR)/$(SAMBA_FSMON_LIBRARY)
 	-$(MAKE) -C $(SAMBA_DIR)/source clean
 
 samba-dirclean:
