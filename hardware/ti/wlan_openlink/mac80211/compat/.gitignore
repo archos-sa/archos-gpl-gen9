@@ -1,0 +1,8 @@
+*~
+git-describe
+compat-release
+master-tag
+Module.symvers
+module.order
+.pc
+
