@@ -1,0 +1,52 @@
+-------------------------------------------------------------------------------
+    Texas Instruments OMAP(TM) Platform Software
+    (c) Copyright 2011 Texas Instruments Incorporated. All Rights Reserved.
+    (c) Copyright 2002-2011 by Imagination Technologies Ltd. All Rights Reserved.
+
+    Use of this software is controlled by the terms and conditions found
+    in the license agreement under which this software has been supplied.
+-------------------------------------------------------------------------------
+
+
+ABOUT
+-----
+
+This repository contains the code for the 3rd Party Display Kernel Device Driver
+for the Android SGX driver. This is a kernel device driver for controlling the display
+hardware. ‘Interfacing code’ is added to the driver allowing the display device
+to be integrated with other Services managed devices.
+
+
+BUILD
+-----
+
+A Makefile is provided to build this component.
+
+First, export the following variables:
+
+	$ export KERNELDIR=<path to kernel>
+		e.g. /home/user/kernel
+
+	$ export PVRKMDIR=<path to DDK repository>
+		e.g. /home/user/img-ddk-linux-android
+
+	$ export TARGET=<target product>
+		e.g. omap5430
+
+You can also specify the cross compiler to be used by exporting the variable
+
+	$ export CROSS_COMPILE=<path to toolchain prefix>
+		e.g. /home/user/cross_compiler/bin/arm-none-linux-gnueabi-
+
+If CROSS_COMPILE is not specified, arm-none-linux-gnueabi- is used as default
+
+To build, issue the make command
+
+	$ make
+
+If the build is successful, copy the generated kernel module files into your device in
+the folder system/lib/modules/
+
+To clean the generated binaries use the command
+
+	$ make clean
