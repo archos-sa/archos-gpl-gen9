@@ -77,6 +77,7 @@ static gboolean add_plugin(void *handle, struct bluetooth_plugin_desc *desc)
 	plugin->active = FALSE;
 	plugin->desc = desc;
 
+
 	plugins = g_slist_insert_sorted(plugins, plugin, compare_priority);
 
 	return TRUE;
@@ -90,7 +91,7 @@ static gboolean enable_plugin(const char *name, char **conf_disable,
 			if (g_pattern_match_simple(*conf_disable, name))
 				break;
 		if (*conf_disable) {
-			info("Excluding (conf) %s", name);
+			INFO("Excluding (conf) %s", name);
 			return FALSE;
 		}
 	}
@@ -100,7 +101,7 @@ static gboolean enable_plugin(const char *name, char **conf_disable,
 			if (g_pattern_match_simple(*cli_disable, name))
 				break;
 		if (*cli_disable) {
-			info("Excluding (cli) %s", name);
+			INFO("Excluding (cli) %s", name);
 			return FALSE;
 		}
 	}
@@ -110,7 +111,7 @@ static gboolean enable_plugin(const char *name, char **conf_disable,
 			if (g_pattern_match_simple(*cli_enable, name))
 				break;
 		if (!*cli_enable) {
-			info("Ignoring (cli) %s", name);
+			INFO("Ignoring (cli) %s", name);
 			return FALSE;
 		}
 	}

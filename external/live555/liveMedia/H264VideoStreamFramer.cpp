@@ -107,6 +107,15 @@ Boolean H264VideoStreamFramer::isH264VideoStreamFramer() const {
   return True;
 }
 
+void H264VideoStreamFramer::updatePresentationTime(struct timeval presentationTime) {
+    struct timeval now;
+    gettimeofday(&now, NULL);
+    if (!fPresentationTimeBaseSynchronized) {
+        fNextPresentationTime = presentationTime;
+        fPresentationTimeBaseSynchronized = True;
+    }
+}
+
 
 ////////// H264VideoStreamParser implementation //////////
 

@@ -38,7 +38,7 @@
 #include <gdbus.h>
 
 #include "log.h"
-#include "glib-helper.h"
+#include "glib-compat.h"
 #include "btio.h"
 #include "dbus-common.h"
 #include "adapter.h"
@@ -49,6 +49,8 @@
 #include "connection.h"
 
 #define NETWORK_PEER_INTERFACE "org.bluez.Network"
+#define CON_SETUP_RETRIES      3
+#define CON_SETUP_TO           9
 
 typedef enum {
 	CONNECTED,
@@ -73,6 +75,8 @@ struct network_conn {
 	guint		watch;		/* Disconnect watch */
 	guint		dc_id;
 	struct network_peer *peer;
+	guint		attempt_cnt;
+	guint 		timeout_source;
 };
 
 struct __service_16 {
@@ -146,6 +150,11 @@ static void cancel_connection(struct network_conn *nc, const char *err_msg)
 {
 	DBusMessage *reply;
 
+	if (nc->timeout_source > 0) {
+		g_source_remove(nc->timeout_source);
+		nc->timeout_source = 0;
+	}
+
 	if (nc->watch) {
 		g_dbus_remove_watch(connection, nc->watch);
 		nc->watch = 0;
@@ -198,6 +207,9 @@ static gboolean bnep_setup_cb(GIOChannel *chan, GIOCondition cond,
 
 	if (cond & G_IO_NVAL)
 		return FALSE;
+
+	g_source_remove(nc->timeout_source);
+	nc->timeout_source = 0;
 
 	if (cond & (G_IO_HUP | G_IO_ERR)) {
 		error("Hangup or error on l2cap server socket");
@@ -289,11 +301,10 @@ failed:
 	return FALSE;
 }
 
-static int bnep_connect(struct network_conn *nc)
+static int bnep_send_conn_req(struct network_conn *nc)
 {
 	struct bnep_setup_conn_req *req;
 	struct __service_16 *s;
-	struct timeval timeo;
 	unsigned char pkt[BNEP_MTU];
 	int fd;
 
@@ -306,14 +317,46 @@ static int bnep_connect(struct network_conn *nc)
 	s->dst = htons(nc->id);
 	s->src = htons(BNEP_SVC_PANU);
 
-	memset(&timeo, 0, sizeof(timeo));
-	timeo.tv_sec = 30;
-
 	fd = g_io_channel_unix_get_fd(nc->io);
-	setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeo, sizeof(timeo));
+	if (write(fd, pkt, sizeof(*req) + sizeof(*s)) < 0) {
+		int err = -errno;
+		error("bnep connection req send failed: %s", strerror(errno));
+		return err;
+	}
 
-	if (send(fd, pkt, sizeof(*req) + sizeof(*s), 0) < 0)
-		return -errno;
+	nc->attempt_cnt++;
+
+	return 0;
+}
+
+static gboolean bnep_conn_req_to(gpointer user_data)
+{
+	struct network_conn *nc;
+
+	nc = user_data;
+	if (nc->attempt_cnt == CON_SETUP_RETRIES) {
+		error("Too many bnep connection attempts");
+	} else {
+		error("bnep connection setup TO, retrying...");
+		if (!bnep_send_conn_req(nc))
+			return TRUE;
+	}
+
+	cancel_connection(nc, "bnep setup failed");
+
+	return FALSE;
+}
+
+static int bnep_connect(struct network_conn *nc)
+{
+	int err;
+
+	nc->attempt_cnt = 0;
+	if ((err = bnep_send_conn_req(nc)))
+		return err;
+
+	nc->timeout_source = g_timeout_add_seconds(CON_SETUP_TO,
+							bnep_conn_req_to, nc);
 
 	g_io_add_watch(nc->io, G_IO_IN | G_IO_ERR | G_IO_HUP | G_IO_NVAL,
 			(GIOFunc) bnep_setup_cb, nc);
@@ -373,6 +416,7 @@ static DBusMessage *connection_connect(DBusConnection *conn,
 				BT_IO_OPT_SOURCE_BDADDR, &peer->src,
 				BT_IO_OPT_DEST_BDADDR, &peer->dst,
 				BT_IO_OPT_PSM, BNEP_PSM,
+				BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_MEDIUM,
 				BT_IO_OPT_OMTU, BNEP_MTU,
 				BT_IO_OPT_IMTU, BNEP_MTU,
 				BT_IO_OPT_INVALID);
@@ -477,8 +521,10 @@ static DBusMessage *connection_get_properties(DBusConnection *conn,
 	return reply;
 }
 
-static void connection_free(struct network_conn *nc)
+static void connection_free(void *data)
 {
+	struct network_conn *nc = data;
+
 	if (nc->dc_id)
 		device_remove_disconnect_watch(nc->peer->device, nc->dc_id);
 
@@ -490,8 +536,7 @@ static void connection_free(struct network_conn *nc)
 
 static void peer_free(struct network_peer *peer)
 {
-	g_slist_foreach(peer->connections, (GFunc) connection_free, NULL);
-	g_slist_free(peer->connections);
+	g_slist_free_full(peer->connections, connection_free);
 	btd_device_unref(peer->device);
 	g_free(peer->path);
 	g_free(peer);

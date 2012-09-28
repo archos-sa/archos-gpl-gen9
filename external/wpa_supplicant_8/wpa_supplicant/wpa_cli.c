@@ -494,6 +494,25 @@ static int wpa_cli_cmd_scan_interval(struct wpa_ctrl *ctrl, int argc,
 	return wpa_ctrl_command(ctrl, cmd);
 }
 
+static int wpa_cli_cmd_sched_scan_intervals(struct wpa_ctrl *ctrl, int argc,
+					    char *argv[])
+{
+	char cmd[256];
+	int res;
+
+	if (argc != 3) {
+		printf("Invalid SCHED_SCAN_INTERVALS command: "
+		       "needs 3 arguments\n");
+		return -1;
+	}
+	res = os_snprintf(cmd, sizeof(cmd), "SCHED_SCAN_INTERVALS %s %s %s",
+			  argv[0], argv[1], argv[2]);
+	if (res < 0 || (size_t) res >= sizeof(cmd) - 1) {
+		printf("Too long SCHED_SCAN_INTERVAL command.\n");
+		return -1;
+	}
+	return wpa_ctrl_command(ctrl, cmd);
+}
 
 static int wpa_cli_cmd_bss_expire_age(struct wpa_ctrl *ctrl, int argc,
 				      char *argv[])
@@ -2265,8 +2284,62 @@ static int wpa_cli_cmd_p2p_ext_listen(struct wpa_ctrl *ctrl, int argc,
 }
 
 #endif /* CONFIG_P2P */
+#ifdef CONFIG_WFD
+static int wpa_cli_cmd_wfd_set(struct wpa_ctrl *ctrl, int argc, char *argv[])
+{
+	char cmd[100];
+	int res;
+
+	if (argc != 2) {
+		printf("Invalid WFD_SET command: needs two arguments (field, "
+		       "value)\n");
+		return -1;
+	}
+
+	res = os_snprintf(cmd, sizeof(cmd), "WFD_SET %s %s", argv[0], argv[1]);
+	if (res < 0 || (size_t) res >= sizeof(cmd))
+		return -1;
+	cmd[sizeof(cmd) - 1] = '\0';
+	return wpa_ctrl_command(ctrl, cmd);
+}
+
+static int wpa_cli_cmd_wfd_get(struct wpa_ctrl *ctrl, int argc, char *argv[])
+{
+	char cmd[100];
+	int res, ret;
+	char buf[4096];
+	size_t len;
 
 
+	if (argc != 1) {
+		printf("Invalid WFD_GET command: needs arguments (value)\n");
+		return -1;
+	}
+
+	res = os_snprintf(cmd, sizeof(cmd), "WFD_GET %s", argv[0]);
+	if (res < 0 || (size_t) res >= sizeof(cmd))
+		return -1;
+	cmd[sizeof(cmd) - 1] = '\0';
+	len = sizeof(buf) - 1;
+	ret = wpa_ctrl_request(ctrl, cmd, strlen(cmd), buf, &len,
+			       wpa_cli_msg_cb);
+	if (ret == -2) {
+		printf("'%s' command timed out.\n", cmd);
+		return -2;
+	} else if (ret < 0) {
+		printf("'%s' command failed.\n", cmd);
+		return -1;
+	}
+
+	buf[len] = '\0';
+	if (memcmp(buf, "FAIL", 4) == 0)
+		ret = -1;
+
+	printf("%s\n", buf);
+	return ret;
+}
+
+#endif /* CONFIG_WFD */
 static int wpa_cli_cmd_sta_autoconnect(struct wpa_ctrl *ctrl, int argc,
 				       char *argv[])
 {
@@ -2545,6 +2618,12 @@ static struct wpa_cli_cmd wpa_cli_commands[] = {
 	{ "scan_interval", wpa_cli_cmd_scan_interval,
 	  cli_cmd_flag_none,
 	  "<value> = set scan_interval parameter (in seconds)" },
+	{ "sched_scan_intervals", wpa_cli_cmd_sched_scan_intervals,
+	  cli_cmd_flag_none,
+	  "<short_interval> <long_interval> <num_short_intervals>\n"
+	  "  Set sched scan intervals parameters\n"
+	  "  <short|long_interval> = intervals values (in seconds)\n"
+	  "  <num_short_intervals> = num of intervals to use short_interval"},
 	{ "bss_expire_age", wpa_cli_cmd_bss_expire_age,
 	  cli_cmd_flag_none,
 	  "<value> = set BSS expiration age parameter" },
@@ -2690,6 +2769,12 @@ static struct wpa_cli_cmd wpa_cli_commands[] = {
 	{ "p2p_ext_listen", wpa_cli_cmd_p2p_ext_listen, cli_cmd_flag_none,
 	  "[<period> <interval>] = set extended listen timing" },
 #endif /* CONFIG_P2P */
+#ifdef CONFIG_WFD
+	{ "wfd_set", wpa_cli_cmd_wfd_set, cli_cmd_flag_none,
+	  "<field> <value> = set a WFD parameter" },
+	{ "wfd_get", wpa_cli_cmd_wfd_get, cli_cmd_flag_none,
+		  "field = get WFD parameters" },
+#endif /* CONFIG_WFD */
 	{ "sta_autoconnect", wpa_cli_cmd_sta_autoconnect, cli_cmd_flag_none,
 	  "<0/1> = disable/enable automatic reconnection" },
 	{ "tdls_discover", wpa_cli_cmd_tdls_discover,

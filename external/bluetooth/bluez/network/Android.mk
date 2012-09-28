@@ -1,4 +1,5 @@
 LOCAL_PATH:= $(call my-dir)
+TIBLUEZVER := $(shell cat $(LOCAL_PATH)/../ti_bluez_version;)
 
 # network plugin
 
@@ -12,7 +13,8 @@ LOCAL_SRC_FILES:= \
 	server.c
 
 LOCAL_CFLAGS:= \
-	-DVERSION=\"4.93\" \
+        -Wno-missing-field-initializers \
+	-DVERSION=\"$(TIBLUEZVER)\" \
 	-DSTORAGEDIR=\"/data/misc/bluetoothd\" \
 	-DCONFIGDIR=\"/etc/bluetooth\" \
 	-DANDROID_NO_BRIDGE \

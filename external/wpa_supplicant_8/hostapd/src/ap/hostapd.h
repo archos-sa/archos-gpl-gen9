@@ -118,6 +118,7 @@ struct hostapd_data {
 	struct l2_packet_data *l2;
 	struct wps_context *wps;
 
+	int beacon_set_done;
 	struct wpabuf *wps_beacon_ie;
 	struct wpabuf *wps_probe_resp_ie;
 
@@ -171,6 +172,11 @@ struct hostapd_data {
 	int noa_start;
 	int noa_duration;
 #endif /* CONFIG_P2P */
+#ifdef CONFIG_WFD
+	struct wfd_data *wfd;
+	struct wpabuf *wfd_beacon_ie;
+	struct wpabuf *wfd_probe_resp_ie;
+#endif /* CONFIG_WFD */
 };
 
 

@@ -31,10 +31,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <sys/types.h>
-#include <netinet/in.h>
-
-#include "parser.h"
+#include "parser/parser.h"
 
 #define GATT_PRIM_SVC_UUID		0x2800
 #define GATT_SND_SVC_UUID		0x2801
@@ -267,7 +264,7 @@ static void att_error_dump(int level, struct frame *frm)
 	printf("Error: %s (%d)\n", atterror2str(err), err);
 
 	p_indent(level, frm);
-	printf("%s (0x%.2x) on handle 0x%2.2x\n", attop2str(op), op, handle);
+	printf("%s (0x%.2x) on handle 0x%4.4x\n", attop2str(op), op, handle);
 }
 
 static void att_mtu_req_dump(int level, struct frame *frm)
@@ -292,7 +289,22 @@ static void att_find_info_req_dump(int level, struct frame *frm)
 	uint16_t end = btohs(htons(get_u16(frm)));
 
 	p_indent(level, frm);
-	printf("start 0x%2.2x, end 0x%2.2x\n", start, end);
+	printf("start 0x%4.4x, end 0x%4.4x\n", start, end);
+}
+
+static void print_uuid128(struct frame *frm)
+{
+	uint8_t uuid[16];
+	int i;
+
+	for (i = 0; i < 16; i++)
+		uuid[15 - i] = get_u8(frm);
+
+	for (i = 0; i < 16; i++) {
+		printf("%02x", uuid[i]);
+		if (i == 3 || i == 5 || i == 7 || i == 9)
+			printf("-");
+	}
 }
 
 static void att_find_info_resp_dump(int level, struct frame *frm)
@@ -308,7 +320,7 @@ static void att_find_info_resp_dump(int level, struct frame *frm)
 			uint16_t handle = btohs(htons(get_u16(frm)));
 			uint16_t uuid = btohs(htons(get_u16(frm)));
 			p_indent(level + 1, frm);
-			printf("handle 0x%2.2x, uuid 0x%2.2x (%s)\n", handle, uuid,
+			printf("handle 0x%4.4x, uuid 0x%4.4x (%s)\n", handle, uuid,
 					uuid2str(uuid));
 		}
 	} else {
@@ -316,15 +328,10 @@ static void att_find_info_resp_dump(int level, struct frame *frm)
 
 		while (frm->len > 0) {
 			uint16_t handle = btohs(htons(get_u16(frm)));
-			int i;
 
 			p_indent(level + 1, frm);
-			printf("handle 0x%2.2x, uuid ", handle);
-			for (i = 0; i < 16; i++) {
-				printf("%02x", get_u8(frm));
-				if (i == 3 || i == 5 || i == 7 || i == 9)
-					printf("-");
-			}
+			printf("handle 0x%4.4x, uuid ", handle);
+			print_uuid128(frm);
 			printf("\n");
 		}
 	}
@@ -362,7 +369,6 @@ static void att_read_by_type_req_dump(int level, struct frame *frm)
 {
 	uint16_t start = btohs(htons(get_u16(frm)));
 	uint16_t end = btohs(htons(get_u16(frm)));
-	int i;
 
 	p_indent(level, frm);
 	printf("start 0x%4.4x, end 0x%4.4x\n", start, end);
@@ -372,11 +378,7 @@ static void att_read_by_type_req_dump(int level, struct frame *frm)
 		printf("type-uuid 0x%4.4x\n", btohs(htons(get_u16(frm))));
 	} else if (frm->len == 16) {
 		printf("type-uuid ");
-		for (i = 0; i < 16; i++) {
-			printf("%02x", get_u8(frm));
-			if (i == 3 || i == 5 || i == 7 || i == 9)
-				printf("-");
-		}
+		print_uuid128(frm);
 		printf("\n");
 	} else {
 		printf("malformed uuid (expected 2 or 16 octets)\n");
@@ -398,7 +400,7 @@ static void att_read_by_type_resp_dump(int level, struct frame *frm)
 		int i;
 
 		p_indent(level + 1, frm);
-		printf("handle 0x%2.2x, value ", handle);
+		printf("handle 0x%4.4x, value ", handle);
 		for (i = 0; i < val_len; i++) {
 			printf("0x%.2x ", get_u8(frm));
 		}
@@ -411,7 +413,7 @@ static void att_read_req_dump(int level, struct frame *frm)
 	uint16_t handle = btohs(htons(get_u16(frm)));
 
 	p_indent(level, frm);
-	printf("handle 0x%2.2x\n", handle);
+	printf("handle 0x%4.4x\n", handle);
 }
 
 static void att_read_blob_req_dump(int level, struct frame *frm)
@@ -471,6 +473,7 @@ static void att_read_by_group_resp_dump(int level, struct frame *frm)
 		printf("value");
 		while (remaining > 0) {
 			printf(" 0x%2.2x", get_u8(frm));
+			remaining--;
 		}
 		printf("\n");
 	}

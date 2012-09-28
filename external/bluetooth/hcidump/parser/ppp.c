@@ -30,9 +30,8 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/types.h>
 
-#include "parser.h"
+#include "parser/parser.h"
 
 #define PPP_U8(frm)  (get_u8(frm))
 #define PPP_U16(frm) (btohs(htons(get_u16(frm))))
@@ -176,12 +175,23 @@ void ppp_dump(int level, struct frame *frm)
 
 		id = 0x07;
 		err = write(frm->pppdump_fd, &id, 1);
+		if (err < 0)
+			return;
+
 		err = write(frm->pppdump_fd, &ts, 4);
+		if (err < 0)
+			return;
 
 		id = frm->in ? 0x02 : 0x01;
 		err = write(frm->pppdump_fd, &id, 1);
+		if (err < 0)
+			return;
 		err = write(frm->pppdump_fd, &len, 2);
+		if (err < 0)
+			return;
 		err = write(frm->pppdump_fd, frm->ptr, frm->len);
+		if (err < 0)
+			return;
 	}
 
 	if (!ppp_traffic) {

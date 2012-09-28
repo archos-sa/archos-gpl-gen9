@@ -40,7 +40,7 @@
 #define ATT_MIN_MTU_LE		23
 #define ATT_MIN_MTU_L2CAP	48
 
-GIOChannel *gatt_connect(const gchar *src, const gchar *dst,
+GIOChannel *gatt_connect(const gchar *src, const gchar *dst,int addr_type,
 				const gchar *sec_level, int psm, int mtu,
 				BtIOConnect connect_cb)
 {
@@ -49,6 +49,7 @@ GIOChannel *gatt_connect(const gchar *src, const gchar *dst,
 	GError *err = NULL;
 	BtIOSecLevel sec;
 	int minimum_mtu;
+	int address_type = 0;
 
 	/* This check is required because currently setsockopt() returns no
 	 * errors for MTU values smaller than the allowed minimum. */
@@ -81,15 +82,21 @@ GIOChannel *gatt_connect(const gchar *src, const gchar *dst,
 	else
 		sec = BT_IO_SEC_LOW;
 
-	if (psm == 0)
+	if (psm == 0) {
+		if (addr_type == 0)
+			address_type = BT_ADDR_LE_PUBLIC;
+		else
+			address_type = BT_ADDR_LE_RANDOM;
+
 		chan = bt_io_connect(BT_IO_L2CAP, connect_cb, NULL, NULL, &err,
 				BT_IO_OPT_SOURCE_BDADDR, &sba,
 				BT_IO_OPT_DEST_BDADDR, &dba,
 				BT_IO_OPT_CID, ATT_CID,
+				BT_IO_OPT_DEST_BDADDR_TYPE, address_type,
 				BT_IO_OPT_OMTU, mtu,
 				BT_IO_OPT_SEC_LEVEL, sec,
 				BT_IO_OPT_INVALID);
-	else
+	} else {
 		chan = bt_io_connect(BT_IO_L2CAP, connect_cb, NULL, NULL, &err,
 				BT_IO_OPT_SOURCE_BDADDR, &sba,
 				BT_IO_OPT_DEST_BDADDR, &dba,
@@ -97,6 +104,7 @@ GIOChannel *gatt_connect(const gchar *src, const gchar *dst,
 				BT_IO_OPT_OMTU, mtu,
 				BT_IO_OPT_SEC_LEVEL, sec,
 				BT_IO_OPT_INVALID);
+	}
 
 	if (err) {
 		g_printerr("%s\n", err->message);

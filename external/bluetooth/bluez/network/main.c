@@ -30,6 +30,7 @@
 #include <gdbus.h>
 
 #include "plugin.h"
+#include "log.h"
 #include "manager.h"
 
 static DBusConnection *connection;

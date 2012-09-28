@@ -31,11 +31,10 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/types.h>
 
 #include <net/ethertypes.h>
 
-#include "parser.h"
+#include "parser/parser.h"
 
 /* BNEP Type */
 #define BNEP_GENERAL_ETHERNET			0x00

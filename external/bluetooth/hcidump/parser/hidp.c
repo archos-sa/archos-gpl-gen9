@@ -31,10 +31,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <sys/types.h>
-#include <netinet/in.h>
-
-#include "parser.h"
+#include "parser/parser.h"
 
 static char *type2str(uint8_t head)
 {

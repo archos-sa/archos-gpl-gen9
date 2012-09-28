@@ -42,7 +42,8 @@ MPEGVideoStreamFramer::MPEGVideoStreamFramer(UsageEnvironment& env,
 					     FramedSource* inputSource)
   : FramedFilter(env, inputSource),
     fFrameRate(0.0) /* until we learn otherwise */,
-    fParser(NULL) {
+    fParser(NULL),
+    fPresentationTimeBaseSynchronized(False) {
   reset();
 }
 
@@ -62,6 +63,7 @@ void MPEGVideoStreamFramer::reset() {
   fPictureTimeBase = 0.0;
   fTcSecsBase = 0;
   fHaveSeenFirstTimeCode = False;
+  fPresentationTimeBaseSynchronized = False;
 
   // Use the current wallclock time as the base 'presentation time':
   gettimeofday(&fPresentationTimeBase, NULL);
@@ -145,8 +147,9 @@ void MPEGVideoStreamFramer::doGetNextFrame() {
 void MPEGVideoStreamFramer
 ::continueReadProcessing(void* clientData,
 			 unsigned char* /*ptr*/, unsigned /*size*/,
-			 struct timeval /*presentationTime*/) {
+			 struct timeval presentationTime) {
   MPEGVideoStreamFramer* framer = (MPEGVideoStreamFramer*)clientData;
+  framer->updatePresentationTime(presentationTime);
   framer->continueReadProcessing();
 }
 
@@ -177,4 +180,13 @@ void MPEGVideoStreamFramer::continueReadProcessing() {
     // - we had to read more data from the source stream, or
     // - the source stream has ended.
   }
+}
+
+void MPEGVideoStreamFramer::updatePresentationTime(struct timeval presentationTime) {
+    struct timeval now;
+    gettimeofday(&now, NULL);
+    if (!fPresentationTimeBaseSynchronized) {
+        fPresentationTimeBase = presentationTime;
+        fPresentationTimeBaseSynchronized = True;
+    }
 }

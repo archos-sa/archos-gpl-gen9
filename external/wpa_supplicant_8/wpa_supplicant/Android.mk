@@ -31,6 +31,8 @@ include $(LOCAL_PATH)/.config
 # To ignore possible wrong network configurations
 L_CFLAGS = -DWPA_IGNORE_CONFIG_ERRORS
 
+L_CFLAGS += -DVERSION_STR_POSTFIX=\"-$(shell cd $(LOCAL_PATH) ; git describe)\"
+
 # Set Android log name
 L_CFLAGS += -DANDROID_LOG_NAME=\"wpa_supplicant\"
 
@@ -244,6 +246,11 @@ NEED_80211_COMMON=y
 ifdef CONFIG_P2P_STRICT
 L_CFLAGS += -DCONFIG_P2P_STRICT
 endif
+endif
+
+ifdef CONFIG_WFD
+OBJS += src/wfd/wfd.c
+L_CFLAGS += -DCONFIG_WFD
 endif
 
 ifdef CONFIG_NO_WPA2

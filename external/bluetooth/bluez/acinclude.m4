@@ -108,6 +108,12 @@ AC_DEFUN([AC_PATH_DBUS], [
 AC_DEFUN([AC_PATH_GLIB], [
 	PKG_CHECK_MODULES(GLIB, glib-2.0 >= 2.16, dummy=yes,
 				AC_MSG_ERROR(GLib library version 2.16 or later is required))
+	AC_CHECK_LIB(glib-2.0, g_slist_free_full, dummy=yes,
+		AC_DEFINE(NEED_G_SLIST_FREE_FULL, 1,
+			[Define to 1 if you need g_slist_free_full() function.]))
+	AC_CHECK_LIB(glib-2.0, g_list_free_full, dummy=yes,
+		AC_DEFINE(NEED_G_LIST_FREE_FULL, 1,
+			[Define to 1 if you need g_list_free_full() function.]))
 	AC_SUBST(GLIB_CFLAGS)
 	AC_SUBST(GLIB_LIBS)
 ])
@@ -119,12 +125,6 @@ AC_DEFUN([AC_PATH_GSTREAMER], [
 	AC_SUBST(GSTREAMER_LIBS)
 	GSTREAMER_PLUGINSDIR=`$PKG_CONFIG --variable=pluginsdir gstreamer-0.10`
 	AC_SUBST(GSTREAMER_PLUGINSDIR)
-])
-
-AC_DEFUN([AC_PATH_PULSE], [
-	PKG_CHECK_MODULES(PULSE, libpulse, pulse_found=yes, pulse_found=no)
-	AC_SUBST(PULSE_CFLAGS)
-	AC_SUBST(PULSE_LIBS)
 ])
 
 AC_DEFUN([AC_PATH_ALSA], [
@@ -167,6 +167,12 @@ AC_DEFUN([AC_PATH_READLINE], [
 		[])
 ])
 
+AC_DEFUN([AC_PATH_CHECK], [
+	PKG_CHECK_MODULES(CHECK, check >= 0.9.6, check_found=yes, check_found=no)
+	AC_SUBST(CHECK_CFLAGS)
+	AC_SUBST(CHECK_LIBS)
+])
+
 AC_DEFUN([AC_PATH_OUI], [
 	AC_ARG_WITH(ouifile,
 		    AS_HELP_STRING([--with-ouifile=PATH],[Path to the oui.txt file @<:@auto@:>@]),
@@ -193,8 +199,6 @@ AC_DEFUN([AC_ARG_BLUEZ], [
 	service_enable=yes
 	health_enable=no
 	pnat_enable=no
-	gatt_example_enable=no
-	tracer_enable=no
 	tools_enable=yes
 	hidd_enable=no
 	pand_enable=no
@@ -205,12 +209,14 @@ AC_DEFUN([AC_ARG_BLUEZ], [
 	pcmcia_enable=no
 	hid2hci_enable=no
 	dfutool_enable=no
-	udevrules_enable=yes
-	configfiles_enable=yes
+	datafiles_enable=yes
 	telephony_driver=dummy
+	time_provider=dummy
 	maemo6_enable=no
 	sap_driver=dummy
 	dbusoob_enable=no
+	wiimote_enable=no
+	gatt_enable=no
 
 	AC_ARG_ENABLE(optimization, AC_HELP_STRING([--disable-optimization], [disable code optimization]), [
 		optimization_enable=${enableval}
@@ -237,6 +243,12 @@ AC_DEFUN([AC_ARG_BLUEZ], [
 	])
 	AC_SUBST([SAP_DRIVER], [sap-${sap_driver}.c])
 
+	AC_ARG_WITH(time, AC_HELP_STRING([--with-time=PROVIDER], [select time provider]), [
+		time_provider=${withval}
+	])
+
+	AC_SUBST([TIME_PROVIDER], [provider-${time_provider}.c])
+
 	AC_ARG_ENABLE(serial, AC_HELP_STRING([--disable-serial], [disable serial plugin]), [
 		serial_enable=${enableval}
 	])
@@ -261,10 +273,6 @@ AC_DEFUN([AC_ARG_BLUEZ], [
 		pnat_enable=${enableval}
 	])
 
-	AC_ARG_ENABLE(gatt-example, AC_HELP_STRING([--enable-gatt-example], [enable GATT example plugin]), [
-		gatt_example_enable=${enableval}
-	])
-
 	AC_ARG_ENABLE(gstreamer, AC_HELP_STRING([--enable-gstreamer], [enable GStreamer support]), [
 		gstreamer_enable=${enableval}
 	])
@@ -275,10 +283,6 @@ AC_DEFUN([AC_ARG_BLUEZ], [
 
 	AC_ARG_ENABLE(usb, AC_HELP_STRING([--enable-usb], [enable USB support]), [
 		usb_enable=${enableval}
-	])
-
-	AC_ARG_ENABLE(tracer, AC_HELP_STRING([--enable-tracer], [install Tracing daemon]), [
-		tracer_enable=${enableval}
 	])
 
 	AC_ARG_ENABLE(tools, AC_HELP_STRING([--enable-tools], [install Bluetooth utilities]), [
@@ -321,12 +325,8 @@ AC_DEFUN([AC_ARG_BLUEZ], [
 		test_enable=${enableval}
 	])
 
-	AC_ARG_ENABLE(udevrules, AC_HELP_STRING([--enable-udevrules], [install Bluetooth udev rules]), [
-		udevrules_enable=${enableval}
-	])
-
-	AC_ARG_ENABLE(configfiles, AC_HELP_STRING([--enable-configfiles], [install Bluetooth configuration files]), [
-		configfiles_enable=${enableval}
+	AC_ARG_ENABLE(datafiles, AC_HELP_STRING([--enable-datafiles], [install Bluetooth configuration and data files]), [
+		datafiles_enable=${enableval}
 	])
 
 	AC_ARG_ENABLE(debug, AC_HELP_STRING([--enable-debug], [enable compiling with debugging information]), [
@@ -347,10 +347,16 @@ AC_DEFUN([AC_ARG_BLUEZ], [
 		dbusoob_enable=${enableval}
 	])
 
+	AC_ARG_ENABLE(wiimote, AC_HELP_STRING([--enable-wiimote], [compile with Wii Remote plugin]), [
+		wiimote_enable=${enableval}
+	])
+
 	AC_ARG_ENABLE(hal, AC_HELP_STRING([--enable-hal], [Use HAL to determine adapter class]), [
 		hal_enable=${enableval}
 	])
 
+	AC_ARG_ENABLE(gatt, AC_HELP_STRING([--enable-gatt], [enable gatt module]), [
+		gatt_enable=${enableval}
 	if (test "${fortify_enable}" = "yes"); then
 		CFLAGS="$CFLAGS -D_FORTIFY_SOURCE=2"
 	fi
@@ -388,22 +394,21 @@ AC_DEFUN([AC_ARG_BLUEZ], [
 	AM_CONDITIONAL(MCAP, test "${health_enable}" = "yes")
 	AM_CONDITIONAL(HAL, test "${hal_enable}" = "yes")
 	AM_CONDITIONAL(READLINE, test "${readline_found}" = "yes")
-	AM_CONDITIONAL(GATT_EXAMPLE_PLUGIN, test "${gatt_example_enable}" = "yes")
-	AM_CONDITIONAL(ECHOPLUGIN, test "no" = "yes")
 	AM_CONDITIONAL(PNATPLUGIN, test "${pnat_enable}" = "yes")
-	AM_CONDITIONAL(TRACER, test "${tracer_enable}" = "yes")
 	AM_CONDITIONAL(HIDD, test "${hidd_enable}" = "yes")
 	AM_CONDITIONAL(PAND, test "${pand_enable}" = "yes")
 	AM_CONDITIONAL(DUND, test "${dund_enable}" = "yes")
 	AM_CONDITIONAL(CUPS, test "${cups_enable}" = "yes")
-	AM_CONDITIONAL(TEST, test "${test_enable}" = "yes")
+	AM_CONDITIONAL(TEST, test "${test_enable}" = "yes" && test "${check_found}" = "yes")
 	AM_CONDITIONAL(TOOLS, test "${tools_enable}" = "yes")
 	AM_CONDITIONAL(BCCMD, test "${bccmd_enable}" = "yes")
 	AM_CONDITIONAL(PCMCIA, test "${pcmcia_enable}" = "yes")
-	AM_CONDITIONAL(HID2HCI, test "${hid2hci_enable}" = "yes" && test "${usb_found}" = "yes")
+	AM_CONDITIONAL(HID2HCI, test "${hid2hci_enable}" = "yes" && test "${usb_found}" = "yes" && test "${udev_found}" = "yes")
 	AM_CONDITIONAL(DFUTOOL, test "${dfutool_enable}" = "yes" && test "${usb_found}" = "yes")
-	AM_CONDITIONAL(UDEVRULES, test "${udevrules_enable}" = "yes")
-	AM_CONDITIONAL(CONFIGFILES, test "${configfiles_enable}" = "yes")
+	AM_CONDITIONAL(DATAFILES, test "${datafiles_enable}" = "yes")
 	AM_CONDITIONAL(MAEMO6PLUGIN, test "${maemo6_enable}" = "yes")
 	AM_CONDITIONAL(DBUSOOBPLUGIN, test "${dbusoob_enable}" = "yes")
+	AM_CONDITIONAL(WIIMOTEPLUGIN, test "${wiimote_enable}" = "yes")
+	AM_CONDITIONAL(GATTMODULES, test "${gatt_enable}" = "yes")
+	AM_CONDITIONAL(HOGPLUGIN, test "${gatt_enable}" = "yes" && test "${input_enable}" = "yes")
 ])

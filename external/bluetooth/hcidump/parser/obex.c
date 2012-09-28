@@ -31,10 +31,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <sys/types.h>
-#include <netinet/in.h>
-
-#include "parser.h"
+#include "parser/parser.h"
 
 static char *opcode2str(uint8_t opcode)
 {
@@ -52,7 +49,7 @@ static char *opcode2str(uint8_t opcode)
 	case 0x05:
 		return "SetPath";
 	case 0x06:
-		return "Reserved";
+		return "Action";
 	case 0x07:
 		return "Session";
 	case 0x7f:
@@ -181,6 +178,16 @@ static char *hi2str(uint8_t hi)
 		return "Session Parameters";
 	case 0x13:
 		return "Session Sequence Number";
+	case 0x14:
+		return "Action ID";
+	case 0x15:
+		return "DestName";
+	case 0x16:
+		return "Permission";
+	case 0x17:
+		return "Single Response Mode";
+	case 0x18:
+		return "Single Response Mode Parameters";
 	default:
 		return "Unknown";
 	}

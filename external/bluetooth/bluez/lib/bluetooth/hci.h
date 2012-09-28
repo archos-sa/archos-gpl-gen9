@@ -102,6 +102,8 @@ enum {
 #define HCISETLINKMODE	_IOW('H', 226, int)
 #define HCISETACLMTU	_IOW('H', 227, int)
 #define HCISETSCOMTU	_IOW('H', 228, int)
+#define HCISETFLOWSPEC _IOW('H', 229, int)
+
 
 #define HCIBLOCKADDR	_IOW('H', 230, int)
 #define HCIUNBLOCKADDR	_IOW('H', 231, int)
@@ -293,7 +295,9 @@ enum {
 #define LMP_EXT_FEAT	0x80
 
 /* Extended LMP features */
+#define LMP_HOST_SSP		0x01
 #define LMP_HOST_LE	0x02
+#define LMP_HOST_LE_BREDR	0x04
 
 /* Link policies */
 #define HCI_LP_RSWITCH	0x0001
@@ -309,6 +313,23 @@ enum {
 #define HCI_LM_TRUSTED	0x0008
 #define HCI_LM_RELIABLE	0x0010
 #define HCI_LM_SECURE	0x0020
+
+/* Link Key types */
+#define HCI_LK_COMBINATION		0x00
+#define HCI_LK_LOCAL_UNIT		0x01
+#define HCI_LK_REMOTE_UNIT		0x02
+#define HCI_LK_DEBUG_COMBINATION	0x03
+#define HCI_LK_UNAUTH_COMBINATION	0x04
+#define HCI_LK_AUTH_COMBINATION		0x05
+#define HCI_LK_CHANGED_COMBINATION	0x06
+#define HCI_LK_INVALID			0xFF
+
+/* Flow specification definitions */
+#define HCI_FS_SERVICETYPE_NO_TRAFFIC  0x00
+#define HCI_FS_SERVICETYPE_BEST_EFFORT 0x01
+#define HCI_FS_SERVICETYPE_GUARANTEED  0x02
+#define HCI_FS_DIR_OUTGOING 0x0
+#define HCI_FS_DIR_INCOMING 0x1
 
 /* -----  HCI Commands ----- */
 
@@ -709,6 +730,14 @@ typedef struct {
 #define OCF_WRITE_DEFAULT_LINK_POLICY	0x000F
 
 #define OCF_FLOW_SPECIFICATION		0x0010
+typedef struct {
+	__u8	flowdir;
+	__u8    service_type;
+	__u32   token_rate;
+	__u32   bucket_size;
+	__u32   peak_bandwidth;
+	__u32   latency;
+} __attribute__ ((packed)) hci_flowspec;
 
 #define OCF_SNIFF_SUBRATING		0x0011
 typedef struct {
@@ -1256,6 +1285,14 @@ typedef struct {
 } __attribute__ ((packed)) write_best_effort_flush_timeout_rp;
 #define WRITE_BEST_EFFORT_FLUSH_TIMEOUT_RP_SIZE 1
 
+#define OCF_READ_LE_HOST_SUPPORTED	0x006C
+typedef struct {
+	uint8_t		status;
+	uint8_t		le;
+	uint8_t		simul;
+} __attribute__ ((packed)) read_le_host_supported_rp;
+#define READ_LE_HOST_SUPPORTED_RP_SIZE 3
+
 #define OCF_WRITE_LE_HOST_SUPPORTED	0x006D
 typedef struct {
 	uint8_t		le;
@@ -1399,17 +1436,16 @@ typedef struct {
 #define OCF_READ_LOCAL_AMP_ASSOC	0x000A
 typedef struct {
 	uint8_t		handle;
-	uint16_t	length_so_far;
-	uint16_t	assoc_length;
+	uint16_t	len_so_far;
+	uint16_t	max_len;
 } __attribute__ ((packed)) read_local_amp_assoc_cp;
-#define READ_LOCAL_AMP_ASSOC_CP_SIZE 5
+
 typedef struct {
 	uint8_t		status;
 	uint8_t		handle;
-	uint16_t	length;
-	uint8_t		fragment[HCI_MAX_NAME_LENGTH];
+	uint16_t	rem_len;
+	uint8_t		frag[0];
 } __attribute__ ((packed)) read_local_amp_assoc_rp;
-#define READ_LOCAL_AMP_ASSOC_RP_SIZE 252
 
 #define OCF_WRITE_REMOTE_AMP_ASSOC	0x000B
 typedef struct {
@@ -2287,6 +2323,7 @@ struct sockaddr_hci {
 
 #define HCI_CHANNEL_RAW		0
 #define HCI_CHANNEL_CONTROL	1
+#define HCI_CHANNEL_MONITOR	2
 
 struct hci_filter {
 	uint32_t type_mask;
@@ -2383,6 +2420,12 @@ struct hci_inquiry_req {
 	uint8_t  num_rsp;
 };
 #define IREQ_CACHE_FLUSH 0x0001
+
+struct hci_flowspec_req {
+	__u16			dev_id;
+	__u16			handle;
+	hci_flowspec	flowspec;
+};
 
 #ifdef __cplusplus
 }

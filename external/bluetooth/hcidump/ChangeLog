@@ -1,3 +1,28 @@
+ver 2.4:
+	Add support for A2MP decoding.
+	Add support for L2CAP create/move channel decoding.
+	Add support for AVRCP volume change notification.
+	Add support for AVRCP absolute volume PDUs.
+	Add support for basic SAP decoding.
+
+ver 2.3:
+	Fix issue with UUID-128 attribute decoding.
+	Add support for OBEX over L2CAP decoding.
+
+ver 2.2:
+	Fix issue with L2CAP CID matching.
+	Add support for L2CAP extended window size decoding.
+	Add support for L2CAP extended control field decoding.
+	Add support for L2CAP information decoding.
+	Add support for AVRCP decoding.
+	Add support for AVCTP decoding.
+
+ver 2.1:
+	Add support for decoding OBEX Action command.
+	Add support for decoding SMP commands.
+	Add support for decoding ATT commands.
+	Add support for missing LE decoding.
+
 ver 2.0:
 	Add support for decoding AMP events.
 	Add support for decoding AMP commands.

@@ -4,6 +4,7 @@
  *
  *  Copyright (C) 2006-2010  Nokia Corporation
  *  Copyright (C) 2004-2010  Marcel Holtmann <marcel@holtmann.org>
+ *  Copyright (C) 2011  BMW Car IT GmbH. All rights reserved.
  *
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -36,6 +37,7 @@
 #include <bluetooth/sdp.h>
 #include <bluetooth/sdp_lib.h>
 
+#include "glib-compat.h"
 #include "log.h"
 #include "device.h"
 #include "manager.h"
@@ -43,8 +45,6 @@
 #include "sink.h"
 #include "source.h"
 #include "unix.h"
-#include "media.h"
-#include "transport.h"
 #include "a2dp.h"
 #include "sdpd.h"
 
@@ -63,7 +63,7 @@
 
 struct a2dp_sep {
 	struct a2dp_server *server;
-	struct media_endpoint *endpoint;
+	struct a2dp_endpoint *endpoint;
 	uint8_t type;
 	uint8_t codec;
 	struct avdtp_local_sep *lsep;
@@ -74,6 +74,8 @@ struct a2dp_sep {
 	gboolean locked;
 	gboolean suspending;
 	gboolean starting;
+	void *user_data;
+	GDestroyNotify destroy;
 };
 
 struct a2dp_setup_cb {
@@ -85,6 +87,16 @@ struct a2dp_setup_cb {
 	guint source_id;
 	void *user_data;
 	unsigned int id;
+	unsigned int embeded_id;
+};
+
+struct a2dp_conf_suspend_cb {
+	struct a2dp_setup_cb *orig_cb_data;
+	struct avdtp *session;
+	struct a2dp_sep *sep;
+	a2dp_config_cb_t cb;
+	GSList *caps;
+	void *user_data;
 };
 
 struct a2dp_setup {
@@ -161,12 +173,13 @@ static void setup_free(struct a2dp_setup *s)
 	DBG("%p", s);
 
 	setups = g_slist_remove(setups, s);
-	if (s->session)
+
+	if (s->session) {
 		avdtp_unref(s->session);
-	g_slist_foreach(s->cb, (GFunc) g_free, NULL);
-	g_slist_free(s->cb);
-	g_slist_foreach(s->caps, (GFunc) g_free, NULL);
-	g_slist_free(s->caps);
+	}
+
+	g_slist_free_full(s->cb, g_free);
+	g_slist_free_full(s->caps, g_free);
 	g_free(s);
 }
 
@@ -245,9 +258,9 @@ static gboolean finalize_config(gpointer data)
 
 		cb->config_cb(s->session, s->sep, stream, s->err,
 							cb->user_data);
+
 		setup_cb_free(cb);
 	}
-
 	return FALSE;
 }
 
@@ -322,6 +335,7 @@ static struct a2dp_setup *find_setup_by_session(struct avdtp *session)
 	return NULL;
 }
 
+
 static struct a2dp_setup *a2dp_setup_get(struct avdtp *session)
 {
 	struct a2dp_setup *setup;
@@ -371,11 +385,10 @@ static void stream_state_changed(struct avdtp_stream *stream,
 		sep->session = NULL;
 	}
 
-	if (sep->endpoint)
-		media_endpoint_clear_configuration(sep->endpoint);
-
 	sep->stream = NULL;
 
+	if (sep->endpoint && sep->endpoint->clear_configuration)
+		sep->endpoint->clear_configuration(sep, sep->user_data);
 }
 
 static gboolean auto_config(gpointer data)
@@ -644,12 +657,10 @@ static gboolean mpeg_getcap_ind(struct avdtp *session,
 	return TRUE;
 }
 
-static void endpoint_setconf_cb(struct media_endpoint *endpoint, void *ret,
-						int size, void *user_data)
-{
-	struct a2dp_setup *setup = user_data;
 
-	if (ret == NULL) {
+static void endpoint_setconf_cb(struct a2dp_setup *setup, gboolean ret)
+{
+	if (ret == FALSE) {
 		setup->err = g_new(struct avdtp_error, 1);
 		avdtp_error_init(setup->err, AVDTP_MEDIA_CODEC,
 					AVDTP_UNSUPPORTED_CONFIGURATION);
@@ -707,13 +718,16 @@ static gboolean endpoint_setconf_ind(struct avdtp *session,
 			goto done;
 		}
 
-		ret = media_endpoint_set_configuration(a2dp_sep->endpoint,
+		ret = a2dp_sep->endpoint->set_configuration(a2dp_sep,
 						setup->dev, codec->data,
 						cap->length - sizeof(*codec),
-						endpoint_setconf_cb, setup);
-		if (ret)
+						setup,
+						endpoint_setconf_cb,
+						a2dp_sep->user_data);
+		if (ret == 0)
 			return TRUE;
 
+		setup->err = g_new(struct avdtp_error, 1);
 		avdtp_error_init(setup->err, AVDTP_MEDIA_CODEC,
 					AVDTP_UNSUPPORTED_CONFIGURATION);
 		break;
@@ -747,8 +761,8 @@ static gboolean endpoint_getcap_ind(struct avdtp *session,
 
 	*caps = g_slist_append(*caps, media_transport);
 
-	length = media_endpoint_get_capabilities(a2dp_sep->endpoint,
-						&capabilities);
+	length = a2dp_sep->endpoint->get_capabilities(a2dp_sep, &capabilities,
+							a2dp_sep->user_data);
 
 	codec_caps = g_malloc0(sizeof(*codec_caps) + length);
 	codec_caps->media_type = AVDTP_MEDIA_TYPE_AUDIO;
@@ -771,13 +785,11 @@ static gboolean endpoint_getcap_ind(struct avdtp *session,
 	return TRUE;
 }
 
-static void endpoint_open_cb(struct media_endpoint *endpoint, void *ret,
-						int size, void *user_data)
+static void endpoint_open_cb(struct a2dp_setup *setup, gboolean ret)
 {
-	struct a2dp_setup *setup = user_data;
 	int err;
 
-	if (ret == NULL) {
+	if (ret == FALSE) {
 		setup->stream = NULL;
 		finalize_setup_errno(setup, -EPERM, finalize_config, NULL);
 		return;
@@ -834,15 +846,18 @@ static void setconf_cfm(struct avdtp *session, struct avdtp_local_sep *sep,
 	if (a2dp_sep->endpoint) {
 		struct avdtp_service_capability *service;
 		struct avdtp_media_codec_capability *codec;
+		int err;
 
 		service = avdtp_stream_get_codec(stream);
 		codec = (struct avdtp_media_codec_capability *) service->data;
 
-		if (media_endpoint_set_configuration(a2dp_sep->endpoint, dev,
+		err = a2dp_sep->endpoint->set_configuration(a2dp_sep, dev,
 						codec->data, service->length -
 						sizeof(*codec),
-						endpoint_open_cb, setup) ==
-						TRUE)
+						setup,
+						endpoint_open_cb,
+						a2dp_sep->user_data);
+		if (err == 0)
 			return;
 
 		setup->stream = NULL;
@@ -1207,18 +1222,17 @@ static gboolean endpoint_delayreport_ind(struct avdtp *session,
 						uint8_t *err, void *user_data)
 {
 	struct a2dp_sep *a2dp_sep = user_data;
-	struct media_transport *transport;
 
 	if (a2dp_sep->type == AVDTP_SEP_TYPE_SINK)
 		DBG("Sink %p: DelayReport_Ind", sep);
 	else
 		DBG("Source %p: DelayReport_Ind", sep);
 
-	transport = media_endpoint_get_transport(a2dp_sep->endpoint);
-	if (transport == NULL)
+	if (a2dp_sep->endpoint == NULL ||
+				a2dp_sep->endpoint->set_delay == NULL)
 		return FALSE;
 
-	media_transport_update_delay(transport, delay);
+	a2dp_sep->endpoint->set_delay(a2dp_sep, delay, a2dp_sep->user_data);
 
 	return TRUE;
 }
@@ -1395,9 +1409,9 @@ static struct a2dp_server *find_server(GSList *list, const bdaddr_t *src)
 
 int a2dp_register(DBusConnection *conn, const bdaddr_t *src, GKeyFile *config)
 {
-	int sbc_srcs = 1, sbc_sinks = 1;
+	int sbc_srcs = 0, sbc_sinks = 0;
 	int mpeg12_srcs = 0, mpeg12_sinks = 0;
-	gboolean source = TRUE, sink = FALSE, socket = TRUE;
+	gboolean source = TRUE, sink = FALSE, socket = FALSE;
 	gboolean delay_reporting = FALSE;
 	char *str;
 	GError *err = NULL;
@@ -1417,6 +1431,8 @@ int a2dp_register(DBusConnection *conn, const bdaddr_t *src, GKeyFile *config)
 			source = TRUE;
 		if (strstr(str, "Source"))
 			sink = TRUE;
+		if (strstr(str, "Socket"))
+			socket = TRUE;
 		g_free(str);
 	}
 
@@ -1436,18 +1452,14 @@ int a2dp_register(DBusConnection *conn, const bdaddr_t *src, GKeyFile *config)
 	}
 
 	/* Don't register any local sep if Socket is disabled */
-	if (socket == FALSE) {
-		sbc_srcs = 0;
-		sbc_sinks = 0;
-		mpeg12_srcs = 0;
-		mpeg12_sinks = 0;
+	if (socket == FALSE)
 		goto proceed;
-	}
 
 	str = g_key_file_get_string(config, "A2DP", "SBCSources", &err);
 	if (err) {
 		DBG("audio.conf: %s", err->message);
 		g_clear_error(&err);
+		sbc_srcs = 1;
 	} else {
 		sbc_srcs = atoi(str);
 		g_free(str);
@@ -1466,6 +1478,7 @@ int a2dp_register(DBusConnection *conn, const bdaddr_t *src, GKeyFile *config)
 	if (err) {
 		DBG("audio.conf: %s", err->message);
 		g_clear_error(&err);
+		sbc_sinks = 1;
 	} else {
 		sbc_sinks = atoi(str);
 		g_free(str);
@@ -1515,23 +1528,25 @@ proceed:
 	if (source) {
 		for (i = 0; i < sbc_srcs; i++)
 			a2dp_add_sep(src, AVDTP_SEP_TYPE_SOURCE,
-				A2DP_CODEC_SBC, delay_reporting, NULL, NULL);
+					A2DP_CODEC_SBC, delay_reporting,
+					NULL, NULL, NULL, NULL);
 
 		for (i = 0; i < mpeg12_srcs; i++)
 			a2dp_add_sep(src, AVDTP_SEP_TYPE_SOURCE,
 					A2DP_CODEC_MPEG12, delay_reporting,
-					NULL, NULL);
+					NULL, NULL, NULL, NULL);
 	}
 	server->sink_enabled = sink;
 	if (sink) {
 		for (i = 0; i < sbc_sinks; i++)
 			a2dp_add_sep(src, AVDTP_SEP_TYPE_SINK,
-				A2DP_CODEC_SBC, delay_reporting, NULL, NULL);
+					A2DP_CODEC_SBC, delay_reporting,
+					NULL, NULL, NULL, NULL);
 
 		for (i = 0; i < mpeg12_sinks; i++)
 			a2dp_add_sep(src, AVDTP_SEP_TYPE_SINK,
 					A2DP_CODEC_MPEG12, delay_reporting,
-					NULL, NULL);
+					NULL, NULL, NULL, NULL);
 	}
 
 	return 0;
@@ -1539,8 +1554,8 @@ proceed:
 
 static void a2dp_unregister_sep(struct a2dp_sep *sep)
 {
-	if (sep->endpoint) {
-		media_endpoint_release(sep->endpoint);
+	if (sep->destroy) {
+		sep->destroy(sep->user_data);
 		sep->endpoint = NULL;
 	}
 
@@ -1556,15 +1571,20 @@ void a2dp_unregister(const bdaddr_t *src)
 	if (!server)
 		return;
 
-	g_slist_foreach(server->sinks, (GFunc) a2dp_remove_sep, NULL);
-	g_slist_free(server->sinks);
-
-	g_slist_foreach(server->sources, (GFunc) a2dp_remove_sep, NULL);
-	g_slist_free(server->sources);
+	g_slist_free_full(server->sinks, (GDestroyNotify) a2dp_unregister_sep);
+	g_slist_free_full(server->sources,
+					(GDestroyNotify) a2dp_unregister_sep);
 
 	avdtp_exit(src);
 
 	servers = g_slist_remove(servers, server);
+
+	if (server->source_record_id)
+		remove_record_from_server(server->source_record_id);
+
+	if (server->sink_record_id)
+		remove_record_from_server(server->sink_record_id);
+
 	g_free(server);
 
 	if (servers)
@@ -1576,7 +1596,9 @@ void a2dp_unregister(const bdaddr_t *src)
 
 struct a2dp_sep *a2dp_add_sep(const bdaddr_t *src, uint8_t type,
 				uint8_t codec, gboolean delay_reporting,
-				struct media_endpoint *endpoint, int *err)
+				struct a2dp_endpoint *endpoint,
+				void *user_data, GDestroyNotify destroy,
+				int *err)
 {
 	struct a2dp_server *server;
 	struct a2dp_sep *sep;
@@ -1588,7 +1610,7 @@ struct a2dp_sep *a2dp_add_sep(const bdaddr_t *src, uint8_t type,
 	server = find_server(servers, src);
 	if (server == NULL) {
 		if (err)
-			*err = -EINVAL;
+			*err = -EPROTONOSUPPORT;
 		return NULL;
 	}
 
@@ -1629,6 +1651,8 @@ proceed:
 	sep->codec = codec;
 	sep->type = type;
 	sep->delay_reporting = delay_reporting;
+	sep->user_data = user_data;
+	sep->destroy = destroy;
 
 	if (type == AVDTP_SEP_TYPE_SOURCE) {
 		l = &server->sources;
@@ -1878,10 +1902,8 @@ static gboolean select_capabilities(struct avdtp *session,
 	return TRUE;
 }
 
-static void select_cb(struct media_endpoint *endpoint, void *ret, int size,
-			void *user_data)
+static void select_cb(struct a2dp_setup *setup, void *ret, int size)
 {
-	struct a2dp_setup *setup = user_data;
 	struct avdtp_service_capability *media_transport, *media_codec;
 	struct avdtp_media_codec_capability *cap;
 
@@ -1932,7 +1954,7 @@ static struct a2dp_sep *a2dp_find_sep(struct avdtp *session, GSList *list,
 			if (sep->endpoint == NULL)
 				continue;
 
-			name = media_endpoint_get_sender(sep->endpoint);
+			name = sep->endpoint->get_name(sep, sep->user_data);
 			if (g_strcmp0(sender, name) != 0)
 				continue;
 		}
@@ -1979,6 +2001,7 @@ unsigned int a2dp_select_capabilities(struct avdtp *session,
 	struct a2dp_sep *sep;
 	struct avdtp_service_capability *service;
 	struct avdtp_media_codec_capability *codec;
+	int err;
 
 	sep = a2dp_select_sep(session, type, sender);
 	if (!sep) {
@@ -2019,10 +2042,11 @@ unsigned int a2dp_select_capabilities(struct avdtp *session,
 	service = avdtp_get_codec(setup->rsep);
 	codec = (struct avdtp_media_codec_capability *) service->data;
 
-	if (media_endpoint_select_configuration(sep->endpoint, codec->data,
-						service->length - sizeof(*codec),
-						select_cb, setup) ==
-						TRUE)
+	err = sep->endpoint->select_configuration(sep, codec->data,
+					service->length - sizeof(*codec),
+					setup,
+					select_cb, sep->user_data);
+	if (err == 0)
 		return cb_data->id;
 
 fail:
@@ -2031,11 +2055,87 @@ fail:
 
 }
 
+static void a2dp_conf_suspend_complete(struct avdtp *session,
+				struct avdtp_error *err, void *user_data)
+{
+	struct a2dp_conf_suspend_cb *susp_cb_data = user_data;
+	struct avdtp_error dummy_err;
+
+
+	susp_cb_data->orig_cb_data->embeded_id = 0;
+
+	if (err) {
+		susp_cb_data->orig_cb_data->setup->err = err;
+		finalize_config(susp_cb_data->orig_cb_data->setup);
+	} else {
+		/*
+		 * Need to release timer since we are
+		 * back to OPEN state
+		 */
+		if (susp_cb_data->sep->suspend_timer) {
+			g_source_remove(susp_cb_data->sep->suspend_timer);
+			susp_cb_data->sep->suspend_timer = 0;
+		}
+
+		if (!a2dp_config(susp_cb_data->session,susp_cb_data->sep,
+				susp_cb_data->cb, susp_cb_data->caps, susp_cb_data->user_data,
+				susp_cb_data->orig_cb_data)) {
+			/* second call to a2dp_config failed, it wont fire the original
+			 * callback, but the client->req_id = id is set with it,
+			 * so we need to simulate completion with AVDTP error, which is
+			 *  ugly but
+			 *  a2dp_config_complete does not care about the meaning of
+			 *  error */
+
+			avdtp_error_init(&dummy_err, AVDTP_ERRNO, -AVDTP_BAD_STATE);
+			susp_cb_data->orig_cb_data->setup->err = &dummy_err;
+			finalize_config(susp_cb_data->orig_cb_data->setup);
+		}
+		/* thats it, now a2dp_config runs like it would for the first
+		 * time with state
+		 * stream state OPEN
+		 */
+
+	}
+	//g_slist_free_full(susp_cb_data->caps, g_free);
+	g_slist_free(susp_cb_data->caps);
+	g_free(susp_cb_data);
+}
+
+gboolean cap_in_caps( struct avdtp_service_capability *cap, GSList *caps )
+{
+	for (; caps; caps = g_slist_next(caps)) {
+		struct avdtp_service_capability *l = caps->data;
+
+		if ((cap->length == l->length) && (cap->category == l->category)
+				&& (!memcmp(&cap->data, &l->data, l->length)))
+				return TRUE;
+	}
+
+	return FALSE;
+}
+
+gboolean caps_eq(GSList *a, GSList *b)
+{
+
+	if (g_slist_length(a) != g_slist_length(b))
+		return FALSE;
+
+	for (; a; a = g_slist_next(a)) {
+		struct avdtp_service_capability *cap = a->data;
+
+		if (!cap_in_caps(cap,b))
+			return FALSE;
+	}
+	return TRUE;
+}
+
 unsigned int a2dp_config(struct avdtp *session, struct a2dp_sep *sep,
 				a2dp_config_cb_t cb, GSList *caps,
-				void *user_data)
+				void *user_data, void *orig_cb_data)
 {
 	struct a2dp_setup_cb *cb_data;
+	struct a2dp_conf_suspend_cb *susp_cb_data;
 	GSList *l;
 	struct a2dp_server *server;
 	struct a2dp_setup *setup;
@@ -2044,6 +2144,8 @@ unsigned int a2dp_config(struct avdtp *session, struct a2dp_sep *sep,
 	struct avdtp_media_codec_capability *codec_cap = NULL;
 	int posix_err;
 	bdaddr_t src;
+	unsigned int id;
+
 
 	avdtp_get_peers(session, &src, NULL);
 	server = find_server(servers, &src);
@@ -2072,18 +2174,24 @@ unsigned int a2dp_config(struct avdtp *session, struct a2dp_sep *sep,
 	if (!setup)
 		return 0;
 
-	cb_data = setup_cb_new(setup);
-	cb_data->config_cb = cb;
-	cb_data->user_data = user_data;
+	if (!orig_cb_data) {
+		cb_data = setup_cb_new(setup);
+		cb_data->config_cb = cb;
+		cb_data->user_data = user_data;
+	} else {
+		cb_data = orig_cb_data;
+	}
 
 	setup->sep = sep;
 	setup->stream = sep->stream;
 
-	/* Copy given caps if they are different than current caps */
-	if (setup->caps != caps) {
-		g_slist_foreach(setup->caps, (GFunc) g_free, NULL);
-		g_slist_free(setup->caps);
-		setup->caps = g_slist_copy(caps);
+/* compare requested caps agains the already-in-progress ones
+ * I believe it is save to overwrite the old ones in case they
+ * differ
+ * */
+	if (!caps_eq(setup->caps,caps)) {
+		g_slist_free_full(setup->caps, g_free);
+		g_slist_foreach(caps, copy_capabilities, &setup->caps);
 	}
 
 	switch (avdtp_sep_get_state(sep->lsep)) {
@@ -2127,15 +2235,46 @@ unsigned int a2dp_config(struct avdtp *session, struct a2dp_sep *sep,
 		break;
 	case AVDTP_STATE_OPEN:
 	case AVDTP_STATE_STREAMING:
+
 		if (avdtp_stream_has_capabilities(setup->stream, caps)) {
 			DBG("Configuration match: resuming");
-			cb_data->source_id = g_idle_add(finalize_config,
-								setup);
+			cb_data->source_id = g_idle_add(finalize_config,setup);
 		} else if (!setup->reconfigure) {
-			setup->reconfigure = TRUE;
-			if (avdtp_close(session, sep->stream, FALSE) < 0) {
-				error("avdtp_close failed");
-				goto failed;
+			if (avdtp_sep_get_state(sep->lsep) == AVDTP_STATE_OPEN) {
+				setup->reconfigure = TRUE;
+				posix_err = avdtp_reconfigure(session,caps,sep->stream);
+				if (posix_err < 0) {
+					error("avdtp_reconfigure: %s",
+						strerror(-posix_err));
+					goto failed;
+				}
+				cb_data->source_id = g_idle_add(finalize_config,setup);
+			} else {
+				DBG("Switching to suspended state...");
+				/* switch to suspended state */
+				susp_cb_data = g_new0(struct a2dp_conf_suspend_cb, 1);
+				susp_cb_data->orig_cb_data = cb_data;
+				//g_slist_foreach(caps, copy_capabilities, &susp_cb_data->caps);
+				susp_cb_data->caps = g_slist_copy(setup->caps);
+				susp_cb_data->session = session;
+				susp_cb_data->cb = cb;
+				susp_cb_data->user_data = user_data;
+				susp_cb_data->sep = sep;
+
+				id = a2dp_suspend(session, sep, a2dp_conf_suspend_complete, susp_cb_data);
+				if (!id)
+				{
+					error("a2dp_suspend failed from a2dp_config");
+					//g_slist_free_full(susp_cb_data->caps, g_free);
+					g_slist_free(susp_cb_data->caps);
+					g_free(susp_cb_data);
+					goto failed;
+				}
+				cb_data->embeded_id = id;
+				/* we became a2dp_suspend - unref setup
+				/* TODO: check what happens with setup in case cancel_request is called
+				 */
+				setup_unref(setup);
 			}
 		}
 		break;
@@ -2147,7 +2286,8 @@ unsigned int a2dp_config(struct avdtp *session, struct a2dp_sep *sep,
 	return cb_data->id;
 
 failed:
-	setup_cb_free(cb_data);
+	if (!orig_cb_data)
+		setup_cb_free(cb_data);
 	return 0;
 }
 
@@ -2251,6 +2391,7 @@ gboolean a2dp_cancel(struct audio_device *dev, unsigned int id)
 {
 	struct a2dp_setup *setup;
 	GSList *l;
+	gboolean embed_ret = TRUE;
 
 	setup = find_setup_by_dev(dev);
 	if (!setup)
@@ -2262,6 +2403,9 @@ gboolean a2dp_cancel(struct audio_device *dev, unsigned int id)
 		if (cb->id != id)
 			continue;
 
+		if (cb->embeded_id)
+			embed_ret = a2dp_cancel(dev,id);
+
 		setup_ref(setup);
 		setup_cb_free(cb);
 
@@ -2272,7 +2416,7 @@ gboolean a2dp_cancel(struct audio_device *dev, unsigned int id)
 		}
 
 		setup_unref(setup);
-		return TRUE;
+		return (embed_ret);
 	}
 
 	return FALSE;

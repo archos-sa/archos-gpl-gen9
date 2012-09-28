@@ -47,6 +47,7 @@ static gchar *opt_dst = NULL;
 static gchar *opt_sec_level = NULL;
 static int opt_psm = 0;
 static int opt_mtu = 0;
+static int opt_addr_type = 0;
 
 struct characteristic_data {
 	uint16_t orig_start;
@@ -149,6 +150,22 @@ static void connect_cb(GIOChannel *io, GError *err, gpointer user_data)
 	set_state(STATE_CONNECTED);
 }
 
+static void disconnect_io()
+{
+	if (conn_state == STATE_DISCONNECTED)
+		return;
+
+	g_attrib_unref(attrib);
+	attrib = NULL;
+	opt_mtu = 0;
+
+	g_io_channel_shutdown(iochannel, FALSE, NULL);
+	g_io_channel_unref(iochannel);
+	iochannel = NULL;
+
+	set_state(STATE_DISCONNECTED);
+}
+
 static void primary_all_cb(GSList *services, guint8 status, gpointer user_data)
 {
 	GSList *l;
@@ -161,9 +178,9 @@ static void primary_all_cb(GSList *services, guint8 status, gpointer user_data)
 
 	printf("\n");
 	for (l = services; l; l = l->next) {
-		struct att_primary *prim = l->data;
+		struct gatt_primary *prim = l->data;
 		printf("attr handle: 0x%04x, end grp handle: 0x%04x "
-			"uuid: %s\n", prim->start, prim->end, prim->uuid);
+			"uuid: %s\n", prim->range.start, prim->range.end, prim->uuid);
 	}
 
 	rl_forced_update_display();
@@ -190,6 +207,28 @@ static void primary_by_uuid_cb(GSList *ranges, guint8 status,
 	rl_forced_update_display();
 }
 
+static void included_cb(GSList *includes, guint8 status, gpointer user_data)
+{
+	GSList *l;
+
+	if (status) {
+		printf("Find included services failed: %s\n",
+							att_ecode2str(status));
+		return;
+	}
+
+	printf("\n");
+	for (l = includes; l; l = l->next) {
+		struct gatt_included *incl = l->data;
+		printf("handle: 0x%04x, start handle: 0x%04x, "
+						"end handle: 0x%04x uuid: %s\n",
+						incl->handle, incl->range.start,
+						incl->range.end, incl->uuid);
+	}
+
+	rl_forced_update_display();
+}
+
 static void char_cb(GSList *characteristics, guint8 status, gpointer user_data)
 {
 	GSList *l;
@@ -202,7 +241,7 @@ static void char_cb(GSList *characteristics, guint8 status, gpointer user_data)
 
 	printf("\n");
 	for (l = characteristics; l; l = l->next) {
-		struct att_char *chars = l->data;
+		struct gatt_char *chars = l->data;
 
 		printf("handle: 0x%04x, char properties: 0x%02x, char value "
 				"handle: 0x%04x, uuid: %s\n", chars->handle,
@@ -279,6 +318,39 @@ static void char_read_cb(guint8 status, const guint8 *pdu, guint16 plen,
 	rl_forced_update_display();
 }
 
+static void att_read_by_type_cb(guint8 status, const guint8 *pdu,
+					guint16 plen, gpointer user_data)
+{
+	struct att_data_list *list;
+	int i;
+
+	if (status != 0) {
+		printf("Read characteristics by UUID failed: %s\n",
+							att_ecode2str(status));
+		return;
+	}
+
+	list = dec_read_by_type_resp(pdu, plen);
+	if (list == NULL)
+		return;
+
+	for (i = 0; i < list->num; i++) {
+		uint8_t *value = list->data[i];
+		int j;
+
+		printf("\nhandle: 0x%04x \t value: ", att_get_u16(value));
+		value += 2;
+		for (j = 0; j < list->len - 2; j++, value++)
+			printf("%02x ", *value);
+		printf("\n");
+	}
+
+	att_data_list_free(list);
+
+	rl_forced_update_display();
+}
+
+
 static void char_read_by_uuid_cb(guint8 status, const guint8 *pdu,
 					guint16 plen, gpointer user_data)
 {
@@ -327,6 +399,14 @@ static void cmd_exit(int argcp, char **argvp)
 	g_main_loop_quit(event_loop);
 }
 
+static gboolean channel_watcher(GIOChannel *chan, GIOCondition cond,
+				gpointer user_data)
+{
+	disconnect_io();
+
+	return FALSE;
+}
+
 static void cmd_connect(int argcp, char **argvp)
 {
 	if (conn_state != STATE_DISCONNECTED)
@@ -343,26 +423,17 @@ static void cmd_connect(int argcp, char **argvp)
 	}
 
 	set_state(STATE_CONNECTING);
-	iochannel = gatt_connect(opt_src, opt_dst, opt_sec_level, opt_psm,
+	iochannel = gatt_connect(opt_src, opt_dst, opt_addr_type, opt_sec_level, opt_psm,
 						opt_mtu, connect_cb);
 	if (iochannel == NULL)
 		set_state(STATE_DISCONNECTED);
+	else
+		g_io_add_watch(iochannel, G_IO_HUP, channel_watcher, NULL);
 }
 
 static void cmd_disconnect(int argcp, char **argvp)
 {
-	if (conn_state == STATE_DISCONNECTED)
-		return;
-
-	g_attrib_unref(attrib);
-	attrib = NULL;
-	opt_mtu = 0;
-
-	g_io_channel_shutdown(iochannel, FALSE, NULL);
-	g_io_channel_unref(iochannel);
-	iochannel = NULL;
-
-	set_state(STATE_DISCONNECTED);
+	disconnect_io();
 }
 
 static void cmd_primary(int argcp, char **argvp)
@@ -398,6 +469,36 @@ static int strtohandle(const char *src)
 		return -EINVAL;
 
 	return dst;
+}
+
+static void cmd_included(int argcp, char **argvp)
+{
+	int start = 0x0001;
+	int end = 0xffff;
+
+	if (conn_state != STATE_CONNECTED) {
+		printf("Command failed: disconnected\n");
+		return;
+	}
+
+	if (argcp > 1) {
+		start = strtohandle(argvp[1]);
+		if (start < 0) {
+			printf("Invalid start handle: %s\n", argvp[1]);
+			return;
+		}
+		end = start;
+	}
+
+	if (argcp > 2) {
+		end = strtohandle(argvp[2]);
+		if (end < 0) {
+			printf("Invalid end handle: %s\n", argvp[2]);
+			return;
+		}
+	}
+
+	gatt_find_included(attrib, start, end, included_cb, NULL);
 }
 
 static void cmd_char(int argcp, char **argvp)
@@ -503,6 +604,55 @@ static void cmd_read_hnd(int argcp, char **argvp)
 	}
 
 	gatt_read_char(attrib, handle, offset, char_read_cb, attrib);
+}
+
+static void cmd_att_read_by_type(int argcp, char **argvp)
+{
+	struct characteristic_data *char_data;
+	int start = 0x0001;
+	int end = 0xffff;
+	bt_uuid_t uuid;
+	int buflen;
+	uint8_t *buf;
+	guint16 plen;
+
+	if (conn_state != STATE_CONNECTED) {
+		printf("Command failed: disconnected\n");
+		return;
+	}
+
+	if (argcp < 2) {
+		printf("Missing argument: UUID\n");
+		return;
+	}
+
+	if (bt_string_to_uuid(&uuid, argvp[1]) < 0) {
+		printf("Invalid UUID\n");
+		return;
+	}
+
+	if (argcp > 2) {
+		start = strtohandle(argvp[2]);
+		if (start < 0) {
+			printf("Invalid start handle: %s\n", argvp[1]);
+			return;
+		}
+	}
+
+	if (argcp > 3) {
+		end = strtohandle(argvp[3]);
+		if (end < 0) {
+			printf("Invalid end handle: %s\n", argvp[2]);
+			return;
+		}
+	}
+
+	buf = g_attrib_get_buffer(attrib, &buflen);
+	plen = enc_read_by_type_req(start, end, &uuid, buf, buflen);
+	if (plen > 0) {
+		g_attrib_send(attrib, 0, ATT_OP_READ_BY_TYPE_REQ,
+						buf, plen, att_read_by_type_cb, NULL, NULL);
+	}
 }
 
 static void cmd_read_uuid(int argcp, char **argvp)
@@ -718,12 +868,16 @@ static struct {
 		"Show this help"},
 	{ "exit",		cmd_exit,	"",
 		"Exit interactive mode" },
+	{ "quit",		cmd_exit,	"",
+		"Exit interactive mode" },
 	{ "connect",		cmd_connect,	"[address]",
 		"Connect to a remote device" },
 	{ "disconnect",		cmd_disconnect,	"",
 		"Disconnect from a remote device" },
 	{ "primary",		cmd_primary,	"[UUID]",
 		"Primary Service Discovery" },
+	{ "included",		cmd_included,	"[start hnd [end hnd]]",
+		"Find Included Services" },
 	{ "characteristics",	cmd_char,	"[start hnd [end hnd [UUID]]]",
 		"Characteristics Discovery" },
 	{ "char-desc",		cmd_char_desc,	"[start hnd] [end hnd]",
@@ -740,6 +894,8 @@ static struct {
 		"Set security level. Default: low" },
 	{ "mtu",		cmd_mtu,	"<value>",
 		"Exchange MTU for GATT/ATT" },
+	{ "att-read-by-type",	cmd_att_read_by_type,"<UUID> [start hnd] [end hnd]",
+			"ATT Read By Type Request" },
 	{ NULL, NULL, NULL}
 };
 
@@ -798,7 +954,34 @@ static gboolean prompt_read(GIOChannel *chan, GIOCondition cond,
 	return TRUE;
 }
 
-int interactive(const gchar *src, const gchar *dst, int psm)
+static char *completion_generator(const char *text, int state)
+{
+	static int index = 0, len = 0;
+	const char *cmd = NULL;
+
+	if (state == 0) {
+		index = 0;
+		len = strlen(text);
+	}
+
+	while ((cmd = commands[index].cmd) != NULL) {
+		index++;
+		if (strncmp(cmd, text, len) == 0)
+			return strdup(cmd);
+	}
+
+	return NULL;
+}
+
+static char **commands_completion(const char *text, int start, int end)
+{
+	if (start == 0)
+		return rl_completion_matches(text, &completion_generator);
+	else
+		return NULL;
+}
+
+int interactive(const gchar *src, const gchar *dst, int addr_type, int psm)
 {
 	GIOChannel *pchan;
 	gint events;
@@ -808,6 +991,7 @@ int interactive(const gchar *src, const gchar *dst, int psm)
 	opt_src = g_strdup(src);
 	opt_dst = g_strdup(dst);
 	opt_psm = psm;
+	opt_addr_type = addr_type;
 
 	prompt = g_string_new(NULL);
 
@@ -818,6 +1002,7 @@ int interactive(const gchar *src, const gchar *dst, int psm)
 	events = G_IO_IN | G_IO_ERR | G_IO_HUP | G_IO_NVAL;
 	g_io_add_watch(pchan, events, prompt_read, NULL);
 
+	rl_attempted_completion_function = commands_completion;
 	rl_callback_handler_install(get_prompt(), parse_line);
 
 	g_main_loop_run(event_loop);

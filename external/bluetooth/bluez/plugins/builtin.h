@@ -20,7 +20,13 @@
  *  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  *
  */
+extern struct bluetooth_plugin_desc __bluetooth_builtin_mgmtops;
 extern struct bluetooth_plugin_desc __bluetooth_builtin_hciops;
+extern struct bluetooth_plugin_desc __bluetooth_builtin_adaptername;
+extern struct bluetooth_plugin_desc __bluetooth_builtin_service;
 static struct bluetooth_plugin_desc *__bluetooth_builtin[] = {
+	&__bluetooth_builtin_mgmtops,
 	&__bluetooth_builtin_hciops,
+	&__bluetooth_builtin_adaptername,
+    &__bluetooth_builtin_service,
 	NULL };

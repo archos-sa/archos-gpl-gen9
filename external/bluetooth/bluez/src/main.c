@@ -49,7 +49,6 @@
 
 #include "hcid.h"
 #include "sdpd.h"
-#include "attrib-server.h"
 #include "adapter.h"
 #include "dbus-common.h"
 #include "agent.h"
@@ -64,6 +63,14 @@
 #define LAST_ADAPTER_EXIT_TIMEOUT 30
 
 #define DEFAULT_DISCOVERABLE_TIMEOUT 180 /* 3 minutes */
+#define DEFAULT_AUTO_CONNECT_TIMEOUT  60 /* 60 seconds */
+
+#define DEF_RECONNECT_LE_SCAN_TIMEOUT_SEC	30
+#define MIN_RECONNECT_LE_SCAN_TIMEOUT_SEC	5
+
+#define DEF_BACKGROUND_LE_SCAN_INTERVAL	1280
+#define DEF_BACKGROUND_LE_SCAN_WINDOW	12
+#define MAX_LE_SCAN_TIME		10240
 
 struct main_opts main_opts;
 
@@ -106,7 +113,6 @@ static void parse_config(GKeyFile *config)
 	} else {
 		DBG("discovto=%d", val);
 		main_opts.discovto = val;
-		main_opts.flags |= 1 << HCID_SET_DISCOVTO;
 	}
 
 	val = g_key_file_get_integer(config, "General",
@@ -129,6 +135,16 @@ static void parse_config(GKeyFile *config)
 		main_opts.flags |= 1 << HCID_SET_PAGETO;
 	}
 
+	val = g_key_file_get_integer(config, "General", "AutoConnectTimeout",
+									&err);
+	if (err) {
+		DBG("%s", err->message);
+		g_clear_error(&err);
+	} else {
+		DBG("auto_to=%d", val);
+		main_opts.autoto = val;
+	}
+
 	str = g_key_file_get_string(config, "General", "Name", &err);
 	if (err) {
 		DBG("%s", err->message);
@@ -137,7 +153,6 @@ static void parse_config(GKeyFile *config)
 		DBG("name=%s", str);
 		g_free(main_opts.name);
 		main_opts.name = g_strdup(str);
-		main_opts.flags |= 1 << HCID_SET_NAME;
 		g_free(str);
 	}
 
@@ -148,7 +163,6 @@ static void parse_config(GKeyFile *config)
 	} else {
 		DBG("class=%s", str);
 		main_opts.class = strtol(str, NULL, 16);
-		main_opts.flags |= 1 << HCID_SET_CLASS;
 		g_free(str);
 	}
 
@@ -177,6 +191,17 @@ static void parse_config(GKeyFile *config)
 		g_clear_error(&err);
 	} else
 		main_opts.remember_powered = boolean;
+
+	if (main_opts.mode != MODE_OFF) {
+		boolean = g_key_file_get_boolean(config, "General",
+				"InitiallyConnectable", &err);
+		if (err) {
+			DBG("%s", err->message);
+			g_clear_error(&err);
+		} else if (boolean == FALSE)
+			main_opts.mode = MODE_INVISIBLE;
+	}
+
 
 	str = g_key_file_get_string(config, "General", "DeviceID", &err);
 	if (err) {
@@ -212,18 +237,11 @@ static void parse_config(GKeyFile *config)
 		main_opts.debug_keys = boolean;
 
 	boolean = g_key_file_get_boolean(config, "General",
-						"AttributeServer", &err);
+						"EnableGatt", &err);
 	if (err)
 		g_clear_error(&err);
 	else
-		main_opts.attrib_server = boolean;
-
-	boolean = g_key_file_get_boolean(config, "General",
-						"EnableLE", &err);
-	if (err)
-		g_clear_error(&err);
-	else
-		main_opts.le = boolean;
+		main_opts.gatt_enabled = boolean;
 
 	main_opts.link_mode = HCI_LM_ACCEPT;
 
@@ -238,6 +256,60 @@ static void parse_config(GKeyFile *config)
 		DBG("default_link_policy=%s", str);
 		main_opts.link_policy &= strtol(str, NULL, 16);
 	}
+
+	main_opts.le_reconnect_timeout = DEF_RECONNECT_LE_SCAN_TIMEOUT_SEC;
+	val = g_key_file_get_integer(config, "General",
+					"LeReconnectTimeout", &err);
+	if (err) {
+		DBG("%s", err->message);
+		g_clear_error(&err);
+	} else {
+		if (val < MIN_RECONNECT_LE_SCAN_TIMEOUT_SEC)
+			val = MIN_RECONNECT_LE_SCAN_TIMEOUT_SEC;
+
+		DBG("le_reconnect_timeout=%d", val);
+		main_opts.le_reconnect_timeout = val;
+	}
+
+	main_opts.le_bk_scan_interval = DEF_BACKGROUND_LE_SCAN_INTERVAL;
+	val = g_key_file_get_integer(config, "General",
+					"LeBackgroundScanInterval", &err);
+	if (err) {
+		DBG("%s", err->message);
+		g_clear_error(&err);
+	} else {
+		if (val > MAX_LE_SCAN_TIME || val < 0)
+			val = DEF_BACKGROUND_LE_SCAN_INTERVAL;
+
+		DBG("le_bk_scan_interval=%d", val);
+		main_opts.le_bk_scan_interval = val;
+	}
+
+	main_opts.le_bk_scan_window = DEF_BACKGROUND_LE_SCAN_WINDOW;
+	val = g_key_file_get_integer(config, "General",
+					"LeBackgroundScanWindow", &err);
+	if (err) {
+		DBG("%s", err->message);
+		g_clear_error(&err);
+	} else {
+		if (val > MAX_LE_SCAN_TIME || val < 0)
+			val = DEF_BACKGROUND_LE_SCAN_WINDOW;
+
+		DBG("le_bk_scan_window=%d", val);
+		main_opts.le_bk_scan_window = val;
+	}
+
+	if (main_opts.le_bk_scan_interval < main_opts.le_bk_scan_window) {
+		DBG("LE scan window > interval - using equal values");
+		main_opts.le_bk_scan_window = main_opts.le_bk_scan_interval;
+	}
+	
+	boolean = g_key_file_get_boolean(config, "General",
+						"WideBandSpeech", &err);
+	if (err)
+		g_clear_error(&err);
+	else
+		main_opts.wide_band_speech = boolean;
 }
 
 static void init_defaults(void)
@@ -247,6 +319,7 @@ static void init_defaults(void)
 	main_opts.mode	= MODE_CONNECTABLE;
 	main_opts.name	= g_strdup("BlueZ");
 	main_opts.discovto	= DEFAULT_DISCOVERABLE_TIMEOUT;
+	main_opts.autoto = DEFAULT_AUTO_CONNECT_TIMEOUT;
 	main_opts.remember_powered = TRUE;
 	main_opts.reverse_sdp = TRUE;
 	main_opts.name_resolv = TRUE;
@@ -331,6 +404,7 @@ static int connect_dbus(void)
 	conn = g_dbus_setup_bus(DBUS_BUS_SYSTEM, BLUEZ_NAME, &err);
 	if (!conn) {
 		if (dbus_error_is_set(&err)) {
+			g_printerr("D-Bus setup failed: %s\n", err.message);
 			dbus_error_free(&err);
 			return -EIO;
 		}
@@ -474,11 +548,6 @@ int main(int argc, char *argv[])
 
 	start_sdp_server(mtu, main_opts.deviceid, SDP_SERVER_COMPAT);
 
-	if (main_opts.attrib_server) {
-		if (attrib_server_init() < 0)
-			error("Can't initialize attribute server");
-	}
-
 	/* Loading plugins has to be done after D-Bus has been setup since
 	 * the plugins might wanna expose some paths on the bus. However the
 	 * best order of how to init various subsystems of the Bluetooth
@@ -503,9 +572,6 @@ int main(int argc, char *argv[])
 	rfkill_exit();
 
 	plugin_cleanup();
-
-	if (main_opts.attrib_server)
-		attrib_server_exit();
 
 	stop_sdp_server();
 

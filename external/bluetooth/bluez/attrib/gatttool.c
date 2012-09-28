@@ -53,6 +53,7 @@ static int opt_handle = -1;
 static int opt_mtu = 0;
 static int opt_psm = 0;
 static int opt_offset = 0;
+static int opt_addrtype = 0;
 static gboolean opt_primary = FALSE;
 static gboolean opt_characteristics = FALSE;
 static gboolean opt_char_read = FALSE;
@@ -146,9 +147,9 @@ static void primary_all_cb(GSList *services, guint8 status, gpointer user_data)
 	}
 
 	for (l = services; l; l = l->next) {
-		struct att_primary *prim = l->data;
+		struct gatt_primary *prim = l->data;
 		g_print("attr handle = 0x%04x, end grp handle = 0x%04x "
-			"uuid: %s\n", prim->start, prim->end, prim->uuid);
+			"uuid: %s\n", prim->range.start, prim->range.end, prim->uuid);
 	}
 
 done:
@@ -201,7 +202,7 @@ static void char_discovered_cb(GSList *characteristics, guint8 status,
 	}
 
 	for (l = characteristics; l; l = l->next) {
-		struct att_char *chars = l->data;
+		struct gatt_char *chars = l->data;
 
 		g_print("handle = 0x%04x, char properties = 0x%02x, char value "
 			"handle = 0x%04x, uuid = %s\n", chars->handle,
@@ -370,7 +371,7 @@ static void char_write_req_cb(guint8 status, const guint8 *pdu, guint16 plen,
 		goto done;
 	}
 
-	g_print("Characteristic value was written sucessfully\n");
+	g_print("Characteristic value was written successfully\n");
 
 done:
 	if (opt_listen == FALSE)
@@ -529,6 +530,8 @@ static GOptionEntry options[] = {
 		"Specify the PSM for GATT/ATT over BR/EDR", "PSM" },
 	{ "sec-level", 'l', 0, G_OPTION_ARG_STRING, &opt_sec_level,
 		"Set security level. Default: low", "[low | medium | high]"},
+	{ "addrtype", 'a', 0, G_OPTION_ARG_INT, &opt_addrtype,
+			"Specify the address type (0=public 1=random) for LE connection", "ADDRTYPE" },
 	{ NULL },
 };
 
@@ -573,7 +576,7 @@ int main(int argc, char *argv[])
 	}
 
 	if (opt_interactive) {
-		interactive(opt_src, opt_dst, opt_psm);
+		interactive(opt_src, opt_dst, opt_addrtype,opt_psm);
 		goto done;
 	}
 
@@ -597,7 +600,7 @@ int main(int argc, char *argv[])
 		goto done;
 	}
 
-	chan = gatt_connect(opt_src, opt_dst, opt_sec_level,
+	chan = gatt_connect(opt_src, opt_dst, opt_addrtype, opt_sec_level,
 					opt_psm, opt_mtu, connect_cb);
 	if (chan == NULL) {
 		got_error = TRUE;

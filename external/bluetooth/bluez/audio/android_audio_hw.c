@@ -36,6 +36,8 @@
 
 #include "liba2dp.h"
 
+#define AUDIO_CAPABILITIES
+
 #define A2DP_WAKE_LOCK_NAME            "A2dpOutputStream"
 #define MAX_WRITE_RETRIES              5
 
@@ -44,13 +46,24 @@
 
 #define OUT_SINK_ADDR_PARM             "a2dp_sink_address"
 
+#ifdef OMAP_ENHANCEMENT
+#define SIZE_STEREO_PCM16              (2*sizeof(int16_t))
+
+/* Period size (frames) for intermediate buffer, reported by out_get_buffer_size() */
+#define BUF_PERIOD_SIZE 1024
+/* number of periods in the intermediate pcm buffer */
+#define BUF_NUM_PERIODS 8
+/* max number of bytes to write to A2DP at one time */
+#define MAX_A2DP_CHUNK (BUF_PERIOD_SIZE*SIZE_STEREO_PCM16)
+#else /* OMAP_ENHANCEMENT */
 /* number of periods in pcm buffer (one period corresponds to buffer size reported to audio flinger
  * by out_get_buffer_size() */
 #define BUF_NUM_PERIODS 6
+#endif /* OMAP_ENHANCEMENT */
 /* maximum time allowed by out_standby_stream_locked() for 2dp_write() to complete */
 #define BUF_WRITE_COMPLETION_TIMEOUT_MS 5000
 /* maximum time allowed by out_write() for frames to be available in in write thread buffer */
-#define BUF_WRITE_AVAILABILITY_TIMEOUT_MS 1000
+#define BUF_WRITE_AVAILABILITY_TIMEOUT_MS 5000
 /* maximum number of attempts to wait for a write completion in out_standby_stream_locked() */
 #define MAX_WRITE_COMPLETION_ATTEMPTS 5
 
@@ -86,7 +99,9 @@ struct astream_out {
     struct audio_stream_out stream;
 
     uint32_t                sample_rate;
+#if !defined(OMAP_ENHANCEMENT)
     size_t                  buffer_size;
+#endif
     uint32_t                channels;
     int                     format;
 
@@ -100,11 +115,17 @@ struct astream_out {
 
     audio_devices_t         device;
     uint64_t                 last_write_time;
+#if !defined(OMAP_ENHANCEMENT)
     uint32_t                buffer_duration_us;
+#endif
 
     bool                    bt_enabled;
     bool                    suspended;
     char                    a2dp_addr[20];
+
+#ifdef OMAP_ENHANCEMENT
+    size_t                  hw_max_write; /* max bytes written to A2DP at once */
+#endif
 
     uint32_t *buf;              /* pcm buffer between audioflinger thread and write thread*/
     size_t buf_size;            /* size of pcm buffer in frames */
@@ -142,14 +163,20 @@ static int out_set_sample_rate(struct audio_stream *stream, uint32_t rate)
 {
     struct astream_out *out = (struct astream_out *)stream;
 
+#ifndef AUDIO_CAPABILITIES
     LOGE("(%s:%d) %s: Implement me!", __FILE__, __LINE__, __func__);
+#endif
     return 0;
 }
 
 static size_t out_get_buffer_size(const struct audio_stream *stream)
 {
     const struct astream_out *out = (const struct astream_out *)stream;
+#ifdef OMAP_ENHANCEMENT
+    return BUF_PERIOD_SIZE * SIZE_STEREO_PCM16;
+#else
     return out->buffer_size;
+#endif
 }
 
 static uint32_t out_get_channels(const struct audio_stream *stream)
@@ -179,8 +206,19 @@ static int out_dump(const struct audio_stream *stream, int fd)
 static uint32_t out_get_latency(const struct audio_stream_out *stream)
 {
     const struct astream_out *out = (const struct astream_out *)stream;
+#ifdef OMAP_ENHANCEMENT
+    uint32_t latency = 0;
 
-    return (out->buffer_duration_us / 1000) + 200;
+    /* latency of intermediate buffer */
+    latency += (BUF_PERIOD_SIZE * BUF_NUM_PERIODS * 1000) / out->sample_rate;
+    /* fudge value (probably encoder latency) */
+    latency += 120;
+
+    return latency;
+#else /* OMAP_ENHANCEMENT */
+
+    return ((out->buffer_duration_us * BUF_NUM_PERIODS) / 1000) + 200;
+#endif /* OMAP_ENHANCEMENT */
 }
 
 static int out_set_volume(struct audio_stream_out *stream, float left,
@@ -194,6 +232,16 @@ static int out_get_render_position(const struct audio_stream_out *stream,
 {
     return -ENOSYS;
 }
+
+#ifdef AUDIO_CAPABILITIES
+static uint32_t out_get_capabilities(const struct audio_stream_out *stream,
+                                uint32_t devices)
+{
+    const struct astream_out *out = (const struct astream_out *)stream;
+
+    return capabilities_convert_samplerate(out->sample_rate);
+}
+#endif
 
 static int _out_init_locked(struct astream_out *out, const char *addr)
 {
@@ -400,7 +448,11 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer,
 {
     struct astream_out *out = (struct astream_out *)stream;
     int ret;
+#ifdef OMAP_ENHANCEMENT
+    size_t frames_total = bytes / SIZE_STEREO_PCM16; // always stereo 16 bit
+#else
     size_t frames_total = bytes / sizeof(uint32_t); // always stereo 16 bit
+#endif
     uint32_t *buf = (uint32_t *)buffer;
     size_t frames_written = 0;
 
@@ -429,6 +481,7 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer,
 
     pthread_mutex_unlock(&out->lock);
 
+
     while (frames_written < frames_total) {
         size_t frames = _out_frames_available_locked(out);
         if (frames == 0) {
@@ -444,7 +497,11 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer,
         if (frames > frames_total - frames_written) {
             frames = frames_total - frames_written;
         }
+#ifdef OMAP_ENHANCEMENT
+        memcpy(out->buf + out->buf_wr_idx, buf + frames_written, frames * SIZE_STEREO_PCM16);
+#else
         memcpy(out->buf + out->buf_wr_idx, buf + frames_written, frames * sizeof(uint32_t));
+#endif
         frames_written += frames;
         _out_inc_wr_idx_locked(out, frames);
         pthread_mutex_lock(&out->lock);
@@ -467,7 +524,11 @@ err_bt_disabled:
     pthread_mutex_unlock(&out->lock);
 
     /* XXX: simulate audio output timing in case of error?!?! */
+#ifdef OMAP_ENHANCEMENT
+    usleep(bytes * 1000000 / SIZE_STEREO_PCM16 / out->sample_rate);
+#else
     usleep(out->buffer_duration_us);
+#endif
     return ret;
 }
 
@@ -491,10 +552,17 @@ static void *_out_buf_thread_func(void *context)
                 int ret;
                 uint32_t buffer_duration_us;
                 /* PCM format is always 16bit stereo */
+#ifdef OMAP_ENHANCEMENT
+                size_t bytes = frames * SIZE_STEREO_PCM16;
+                if (bytes > out->hw_max_write) {
+                    bytes = out->hw_max_write;
+                }
+#else
                 size_t bytes = frames * sizeof(uint32_t);
                 if (bytes > out->buffer_size) {
                     bytes = out->buffer_size;
                 }
+#endif
 
                 pthread_mutex_lock(&out->lock);
                 if (out->standby) {
@@ -531,7 +599,11 @@ static void *_out_buf_thread_func(void *context)
                     }
                     continue;
                 }
+#ifdef OMAP_ENHANCEMENT
+                ret /= SIZE_STEREO_PCM16;
+#else
                 ret /= sizeof(uint32_t);
+#endif
                 _out_inc_rd_idx_locked(out, ret);
                 frames -= ret;
 
@@ -641,9 +713,16 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
     out->stream.set_volume = out_set_volume;
     out->stream.write = out_write;
     out->stream.get_render_position = out_get_render_position;
+#ifdef AUDIO_CAPABILITIES
+    out->stream.get_capabilities = out_get_capabilities;
+#endif
 
     out->sample_rate = 44100;
+#ifdef OMAP_ENHANCEMENT
+    out->hw_max_write = MAX_A2DP_CHUNK;
+#else
     out->buffer_size = 512 * 20;
+#endif
     out->channels = AUDIO_CHANNEL_OUT_STEREO;
     out->format = AUDIO_FORMAT_PCM_16_BIT;
 
@@ -652,12 +731,14 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
     out->bt_enabled = adev->bt_enabled;
     out->suspended = adev->suspended;
 
+#if !defined(OMAP_ENHANCEMENT)
     /* for now, buffer_duration_us is precalculated and never changed.
      * if the sample rate or the format ever changes on the fly, we'd have
      * to recalculate this */
     out->buffer_duration_us = ((out->buffer_size * 1000 ) /
                                audio_stream_frame_size(&out->stream.common) /
                                out->sample_rate) * 1000;
+#endif
     if (!_out_validate_parms(out, format ? *format : 0,
                              channels ? *channels : 0,
                              sample_rate ? *sample_rate : 0)) {
@@ -672,7 +753,11 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
     }
 
     /* PCM format is always 16bit, stereo */
+#ifdef OMAP_ENHANCEMENT
+    out->buf_size = BUF_PERIOD_SIZE * BUF_NUM_PERIODS;
+#else
     out->buf_size = (out->buffer_size * BUF_NUM_PERIODS) / sizeof(int32_t);
+#endif
     out->buf = (uint32_t *)malloc(out->buf_size * sizeof(int32_t));
     if (!out->buf) {
         goto err_validate_parms;

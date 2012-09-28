@@ -1,4 +1,5 @@
 LOCAL_PATH:= $(call my-dir)
+TIBLUEZVER := $(shell cat $(LOCAL_PATH)/../ti_bluez_version;)
 
 #
 # libbtio
@@ -10,7 +11,7 @@ LOCAL_SRC_FILES:= \
 	btio.c
 
 LOCAL_CFLAGS:= \
-	-DVERSION=\"4.93\" \
+	-DVERSION=\"$(TIBLUEZVER)\" \
 
 LOCAL_C_INCLUDES:= \
 	$(LOCAL_PATH)/../lib \

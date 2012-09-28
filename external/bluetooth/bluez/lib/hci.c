@@ -860,7 +860,7 @@ done:
 
 static int __other_bdaddr(int dd, int dev_id, long arg)
 {
-	struct hci_dev_info di = { dev_id: dev_id };
+	struct hci_dev_info di = { .dev_id = dev_id };
 
 	if (ioctl(dd, HCIGETDEVINFO, (void *) &di))
 		return 0;
@@ -873,7 +873,7 @@ static int __other_bdaddr(int dd, int dev_id, long arg)
 
 static int __same_bdaddr(int dd, int dev_id, long arg)
 {
-	struct hci_dev_info di = { dev_id: dev_id };
+	struct hci_dev_info di = { .dev_id = dev_id };
 
 	if (ioctl(dd, HCIGETDEVINFO, (void *) &di))
 		return 0;
@@ -1012,6 +1012,33 @@ done:
 
 	return ret;
 }
+
+int hci_setflowspec(int dev_id, uint16_t handle, uint8_t flow_dir, uint8_t service_type, uint32_t token_rate,
+		uint32_t bucket_size, uint32_t peak_bandwidth, uint32_t latency )
+{
+    struct hci_flowspec_req fsreq;
+	int dd, ret;
+
+	dd = socket(AF_BLUETOOTH, SOCK_RAW, BTPROTO_HCI);
+	if (dd < 0)
+		return dd;
+
+    memset(&fsreq, 0, sizeof(fsreq));
+    fsreq.dev_id = dev_id;
+    fsreq.handle = handle;
+    fsreq.flowspec.service_type = service_type;
+    fsreq.flowspec.token_rate = token_rate;
+    fsreq.flowspec.peak_bandwidth = peak_bandwidth;
+    fsreq.flowspec.latency = latency;
+    fsreq.flowspec.bucket_size = bucket_size;
+    fsreq.flowspec.flowdir = flow_dir;
+
+	ret = ioctl(dd, HCISETFLOWSPEC, (unsigned long) &fsreq);
+
+	close(dd);
+	return ret;
+}
+
 
 /* Open HCI device.
  * Returns device descriptor (dd). */

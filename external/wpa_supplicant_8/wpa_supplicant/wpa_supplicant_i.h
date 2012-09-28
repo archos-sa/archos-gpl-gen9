@@ -207,6 +207,11 @@ struct p2p_srv_upnp {
 	char *service;
 };
 
+struct p2p_srv_wfd {
+	struct dl_list list;
+	struct wpabuf *query;
+	struct wpabuf *resp;
+};
 /**
  * struct wpa_global - Internal, global data for all %wpa_supplicant interfaces
  *
@@ -226,8 +231,11 @@ struct wpa_global {
 	u8 p2p_dev_addr[ETH_ALEN];
 	struct dl_list p2p_srv_bonjour; /* struct p2p_srv_bonjour */
 	struct dl_list p2p_srv_upnp; /* struct p2p_srv_upnp */
+	struct dl_list p2p_srv_wfd;  /* struct p2p_srv wfd */
 	int p2p_disabled;
 	int cross_connection;
+	struct wfd_data *wfd;
+	int wfd_enabled;
 };
 
 
@@ -361,7 +369,14 @@ struct wpa_supplicant {
 	u8 bssid[ETH_ALEN];
 	u8 pending_bssid[ETH_ALEN]; /* If wpa_state == WPA_ASSOCIATING, this
 				     * field contains the targer BSSID. */
+
+	int roaming_in_progress;
+	int ignore_deauth_event;
+	u8 prev_bssid[ETH_ALEN];     /* BSSID being roamed from */
+	struct wpa_ssid *prev_ssid;  /* SSID being roamed from */
+
 	int reassociate; /* reassociation requested */
+	int roaming; /* roaming requested */
 	int disconnected; /* all connections disabled; i.e., do no reassociate
 			   * before this has been cleared */
 	struct wpa_ssid *current_ssid;
@@ -378,6 +393,11 @@ struct wpa_supplicant {
 	void *drv_priv; /* private data used by driver_ops */
 	void *global_drv_priv;
 
+	enum { WPA_SETBAND_AUTO, WPA_SETBAND_5G, WPA_SETBAND_2G } setband;
+
+	/* previous scan was wildcard when interleaving between
+	 * wildcard scans and specific SSID scan when max_ssids=1 */
+	int prev_scan_wildcard;
 	struct wpa_ssid *prev_scan_ssid; /* previously scanned SSID;
 					  * NULL = not yet initialized (start
 					  * with wildcard SSID)
@@ -434,6 +454,7 @@ struct wpa_supplicant {
 	int max_scan_ssids;
 	int max_sched_scan_ssids;
 	int sched_scan_supported;
+	int sched_scan_intervals_supported;
 	int max_match_sets;
 	unsigned int max_remain_on_chan;
 	unsigned int max_stations;
@@ -564,6 +585,7 @@ struct wpa_supplicant {
 	struct wpa_ssid *bgscan_ssid;
 	const struct bgscan_ops *bgscan;
 	void *bgscan_priv;
+	int roaming_disabled;
 
 	struct wpa_ssid *connect_without_scan;
 
@@ -576,6 +598,12 @@ struct wpa_supplicant {
 	int best_24_freq;
 	int best_5_freq;
 	int best_overall_freq;
+
+	struct {
+		struct hostapd_hw_modes *modes;
+		u16 num_modes;
+		u16 flags;
+	} hw;
 };
 
 
@@ -606,6 +634,10 @@ void wpa_supplicant_req_auth_timeout(struct wpa_supplicant *wpa_s,
 				     int sec, int usec);
 void wpa_supplicant_set_state(struct wpa_supplicant *wpa_s,
 			      enum wpa_states state);
+void wpa_supplicant_start_bgscan(struct wpa_supplicant *wpa_s);
+void wpa_supplicant_stop_bgscan(struct wpa_supplicant *wpa_s);
+void wpa_supplicant_enable_roaming(struct wpa_supplicant *wpa_s);
+void wpa_supplicant_disable_roaming(struct wpa_supplicant *wpa_s);
 struct wpa_ssid * wpa_supplicant_get_ssid(struct wpa_supplicant *wpa_s);
 const char * wpa_supplicant_get_eap_mode(struct wpa_supplicant *wpa_s);
 void wpa_supplicant_cancel_auth_timeout(struct wpa_supplicant *wpa_s);
@@ -652,11 +684,12 @@ enum wpa_key_mgmt key_mgmt2driver(int key_mgmt);
 enum wpa_cipher cipher_suite2driver(int cipher);
 void wpa_supplicant_update_config(struct wpa_supplicant *wpa_s);
 void wpa_supplicant_clear_status(struct wpa_supplicant *wpa_s);
-void ieee80211_sta_free_hw_features(struct hostapd_hw_modes *hw_features,
-				    size_t num_hw_features);
 void wpas_connection_failed(struct wpa_supplicant *wpa_s, const u8 *bssid);
 
 /* events.c */
+void wpa_supplicant_mark_roaming(struct wpa_supplicant *wpa_s);
+void wpa_supplicant_clear_roaming(struct wpa_supplicant *wpa_s,
+				  int ignore_deauth_event);
 void wpa_supplicant_mark_disassoc(struct wpa_supplicant *wpa_s);
 #ifdef ANDROID_BRCM_P2P_PATCH
 int wpa_supplicant_connect(struct wpa_supplicant *wpa_s,

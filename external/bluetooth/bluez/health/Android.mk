@@ -1,4 +1,5 @@
 LOCAL_PATH:= $(call my-dir)
+TIBLUEZVER := $(shell cat $(LOCAL_PATH)/../ti_bluez_version;)
 
 # health plugin
 
@@ -13,7 +14,8 @@ LOCAL_SRC_FILES:= \
 	mcap_sync.c \
 
 LOCAL_CFLAGS:= \
-	-DVERSION=\"4.93\" \
+        -Wno-missing-field-initializers \
+	-DVERSION=\"$(TIBLUEZVER)\" \
 	-DSTORAGEDIR=\"/data/misc/bluetoothd\" \
 	-DCONFIGDIR=\"/etc/bluetooth\" \
 

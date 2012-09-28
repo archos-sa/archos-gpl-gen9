@@ -1,0 +1,44 @@
+LOCAL_PATH:= $(call my-dir)
+
+include $(CLEAR_VARS)
+
+
+TI_BLUETI_KO_INSTALL_PATH := $(PRODUCT_OUT)/system/lib/ti-bluez-ko
+TI_COMAPAT_WL_LOCAL_PATH := $(LOCAL_PATH)
+
+LOCAL_MODULE := ti_bluetooth_ko
+LOCAL_MODULE_TAGS := optional
+LOCAL_MODULE_PATH := $(PRODUCT_OUT)
+LOCAL_UNSTRIPPED_PATH := $(PRODUCT_OUT)
+
+$(info ====== blueti compat ======== )
+$(info TI_COMPAT_ARGS=$(TI_COMPAT_ARGS) )
+$(info ============================== )
+
+ifneq ($(strip $(LOCAL_SRC_FILES)),)
+$(error LOCAL_SRC_FILES are not allowed for phony packages)
+endif
+
+LOCAL_MODULE_CLASS := FAKE
+LOCAL_MODULE_SUFFIX := -timestamp
+
+include $(BUILD_SYSTEM)/base_rules.mk
+
+ifneq ($(TI_COMPAT_ARGS),)
+stam := $(shell rm -f $(LOCAL_BUILT_MODULE) )
+endif
+$(LOCAL_BUILT_MODULE):
+	$(hide) echo "Fake: $@"
+	cd $(TI_COMAPAT_WL_LOCAL_PATH); \
+	./tibluez.sh $(TI_COMPAT_ARGS)
+	mkdir -p $(TI_BLUETI_KO_INSTALL_PATH)
+	echo `pwd`
+	cp $(TI_COMAPAT_WL_LOCAL_PATH)/kos/compat.ko $(TI_BLUETI_KO_INSTALL_PATH)
+	cp $(TI_COMAPAT_WL_LOCAL_PATH)/kos/bluetooth.ko $(TI_BLUETI_KO_INSTALL_PATH)
+	cp $(TI_COMAPAT_WL_LOCAL_PATH)/kos/bnep.ko $(TI_BLUETI_KO_INSTALL_PATH)
+	cp $(TI_COMAPAT_WL_LOCAL_PATH)/kos/hidp.ko $(TI_BLUETI_KO_INSTALL_PATH)
+	cp $(TI_COMAPAT_WL_LOCAL_PATH)/kos/rfcomm.ko $(TI_BLUETI_KO_INSTALL_PATH)
+	cp $(TI_COMAPAT_WL_LOCAL_PATH)/kos/btwilink.ko $(TI_BLUETI_KO_INSTALL_PATH)
+	$(hide) mkdir -p $(dir $@)
+	$(hide) touch $@
+

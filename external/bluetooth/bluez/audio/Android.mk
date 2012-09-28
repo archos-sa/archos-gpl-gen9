@@ -1,4 +1,5 @@
 LOCAL_PATH:= $(call my-dir)
+TIBLUEZVER := $(shell cat $(LOCAL_PATH)/../ti_bluez_version;)
 
 # A2DP plugin
 
@@ -20,10 +21,13 @@ LOCAL_SRC_FILES:= \
 	source.c \
 	telephony-dummy.c \
 	transport.c \
-	unix.c
+	unix.c \
+	avrcp.c \
+	avctp.c
 
 LOCAL_CFLAGS:= \
-	-DVERSION=\"4.93\" \
+        -Wno-missing-field-initializers \
+	-DVERSION=\"$(TIBLUEZVER)\" \
 	-DSTORAGEDIR=\"/data/misc/bluetoothd\" \
 	-DCONFIGDIR=\"/etc/bluetooth\" \
 	-DANDROID \
@@ -42,8 +46,8 @@ LOCAL_SHARED_LIBRARIES := \
 	libbluetoothd \
 	libbtio \
 	libdbus \
-	libglib
-
+	libglib \
+	liblog
 
 LOCAL_MODULE_PATH := $(TARGET_OUT_SHARED_LIBRARIES)/bluez-plugin
 LOCAL_UNSTRIPPED_PATH := $(TARGET_OUT_SHARED_LIBRARIES_UNSTRIPPED)/bluez-plugin
@@ -75,15 +79,34 @@ LOCAL_SRC_FILES+= \
 endif
 
 # to improve SBC performance
+
+ifeq ($(BLUETI_ENHANCEMENT), true)
+
+LOCAL_CFLAGS:= -funroll-loops \
+               -DCONFIGDIR=\"/etc/bluetooth\" \
+  
+LOCAL_C_INCLUDES:= \
+	$(LOCAL_PATH)/../sbc \
+        ../../../../frameworks/base/include \
+	$(LOCAL_PATH)/../lib \
+	$(call include-path-for, glib)
+
+LOCAL_SHARED_LIBRARIES := \
+	libcutils libbluetooth libglib
+
+else
+
 LOCAL_CFLAGS:= -funroll-loops
 
 LOCAL_C_INCLUDES:= \
 	$(LOCAL_PATH)/../sbc \
-	../../../../frameworks/base/include \
-	system/bluetooth/bluez-clean-headers
+        ../../../../frameworks/base/include \
+	$(LOCAL_PATH)/../lib \
 
 LOCAL_SHARED_LIBRARIES := \
-	libcutils
+	libcutils libbluetooth
+	
+endif
 
 ifneq ($(wildcard system/bluetooth/legacy.mk),)
 LOCAL_STATIC_LIBRARIES := \

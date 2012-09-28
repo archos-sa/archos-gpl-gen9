@@ -42,8 +42,6 @@
 #include <sys/poll.h>
 #include <sys/param.h>
 #include <sys/ioctl.h>
-#include <sys/socket.h>
-#include <sys/uio.h>
 
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/hci.h>
@@ -294,7 +292,7 @@ static int digi(int fd, struct uart_t *u, struct termios *ti)
 
 static int texas(int fd, struct uart_t *u, struct termios *ti)
 {
-	return texas_init(fd, ti);
+	return texas_init(fd, &u->speed, ti);
 }
 
 static int texas2(int fd, struct uart_t *u, struct termios *ti)
@@ -778,12 +776,12 @@ static int swave(int fd, struct uart_t *u, struct termios *ti)
 	nanosleep(&tm, NULL);
 
 	// now the uart baud rate on the silicon wave module is set and effective.
-	// change our own baud rate as well. Then there is a reset event comming in
+	// change our own baud rate as well. Then there is a reset event coming in
  	// on the *new* baud rate. This is *undocumented*! The packet looks like this:
 	// 04 FF 01 0B (which would make that a confirmation of 0x0B = "Param
 	// subcommand class". So: change to new baud rate, read with timeout, parse
 	// data, error handling. BTW: all param access in Silicon Wave is done this way.
-	// Maybe this code would belong in a seperate file, or at least code reuse...
+	// Maybe this code would belong in a separate file, or at least code reuse...
 
 	return 0;
 }

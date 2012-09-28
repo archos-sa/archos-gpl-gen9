@@ -28,6 +28,7 @@ Methods		dict GetProperties()
 			On success this will emit a PropertyChanged signal.
 
 			Possible Errors: org.bluez.Error.InvalidArguments
+					 org.bluez.Error.Failed
 
 		void RequestSession()
 
@@ -181,6 +182,38 @@ Methods		dict GetProperties()
 
 			Possible errors: org.bluez.Error.DoesNotExist
 
+		void ConnectLowEnergy(string address)
+
+			Connect to a remote LE device.
+
+			Possible errors: org.bluez.Error.InvalidArguments
+					 org.bluez.Error.DoesNotExist
+
+		void ClearLeWhiteList()
+
+			Clear the LE devices white-list for this adapter.
+			Note the white-list scan must not be running when
+			this function is called.
+
+			Possible errors: org.bluez.Error.Failed
+
+		void StartWhiteListScan(boolean fast)
+
+			Start an LE scan only for devices in our white-list.
+			When asking for a "fast" scan, we use scan parameters
+			that allow for fast-reconnection. The "fast" scan
+			goes on for a limited time, and then we switch to
+			the idle scanning mode.
+
+			Possible errors: org.bluez.Error.InvalidArguments
+					 org.bluez.Error.Failed
+
+		void StopWhiteListScan(boolean fast)
+
+			Stop an LE white-list based scan
+
+			Possible errors: org.bluez.Error.Failed
+
 Signals		PropertyChanged(string name, variant value)
 
 			This signal indicates a changed value of the given
@@ -228,7 +261,12 @@ Properties	string Address [readonly]
 		boolean Powered [readwrite]
 
 			Switch an adapter on or off. This will also set the
-			appropiate connectable state.
+			appropriate connectable state.
+
+		boolean Connectable [readwrite]
+
+			Switch an adapter to connectable and non-discoverable
+			or to non-connectable and non-discoverable.
 
 		boolean Discoverable [readwrite]
 
@@ -257,7 +295,7 @@ Properties	string Address [readonly]
 			Note that this property only affects incoming pairing
 			requests.
 
-		uint32 PaireableTimeout [readwrite]
+		uint32 PairableTimeout [readwrite]
 
 			The pairable timeout in seconds. A value of zero
 			means that the timeout is disabled and it will stay in

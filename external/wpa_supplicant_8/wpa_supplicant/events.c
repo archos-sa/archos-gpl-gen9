@@ -111,6 +111,24 @@ static void wpa_supplicant_stop_countermeasures(void *eloop_ctx,
 	}
 }
 
+void wpa_supplicant_mark_roaming(struct wpa_supplicant *wpa_s)
+{
+	wpa_s->roaming_in_progress = 1;
+	os_memcpy(wpa_s->prev_bssid, wpa_s->bssid, ETH_ALEN);
+	wpa_s->prev_ssid = wpa_s->current_ssid;
+	wpa_dbg(wpa_s, MSG_DEBUG, "Saving prev AP info for roaming recovery - "
+		"SSID ID: %d BSSID: " MACSTR,
+		wpa_s->prev_ssid->id, MAC2STR(wpa_s->prev_bssid));
+}
+
+void wpa_supplicant_clear_roaming(struct wpa_supplicant *wpa_s,
+				  int ignore_deauth_event)
+{
+	wpa_s->roaming_in_progress = 0;
+	wpa_s->ignore_deauth_event = ignore_deauth_event;
+	wpa_s->prev_ssid = NULL;
+	os_memset(wpa_s->prev_bssid, 0, ETH_ALEN);
+}
 
 void wpa_supplicant_mark_disassoc(struct wpa_supplicant *wpa_s)
 {
@@ -133,6 +151,9 @@ void wpa_supplicant_mark_disassoc(struct wpa_supplicant *wpa_s)
 	bssid_changed = !is_zero_ether_addr(wpa_s->bssid);
 	os_memset(wpa_s->bssid, 0, ETH_ALEN);
 	os_memset(wpa_s->pending_bssid, 0, ETH_ALEN);
+#ifdef CONFIG_P2P
+	os_memset(wpa_s->go_dev_addr, 0, ETH_ALEN);
+#endif /* CONFIG_P2P */
 	wpa_s->current_bss = NULL;
 	wpa_s->assoc_freq = 0;
 #ifdef CONFIG_IEEE80211R
@@ -554,8 +575,22 @@ static struct wpa_ssid * wpa_scan_res_match(struct wpa_supplicant *wpa_s,
 		}
 	}
 
+	if (wpa_s->roaming &&
+	    os_memcmp(wpa_s->bssid, bss->bssid, ETH_ALEN) == 0) {
+		wpa_dbg(wpa_s, MSG_DEBUG, "   skip - current bssid (roaming)");
+		return NULL;
+	}
+
 	if (ssid_len == 0) {
 		wpa_dbg(wpa_s, MSG_DEBUG, "   skip - SSID not known");
+		return NULL;
+	}
+
+	if (wpa_s->wpa_state >= WPA_AUTHENTICATING &&
+	    wpa_s->current_ssid &&
+	    os_memcmp(wpa_s->current_ssid->ssid, ssid_, ssid_len) != 0) {
+		wpa_dbg(wpa_s, MSG_DEBUG, "   skip - block roaming to "
+			"a different SSID while connected");
 		return NULL;
 	}
 
@@ -749,6 +784,7 @@ void wpa_supplicant_connect(struct wpa_supplicant *wpa_s,
 #ifdef ANDROID_BRCM_P2P_PATCH
 			return -1;
 #else
+			wpa_supplicant_clear_roaming(wpa_s, 0);
 			return;
 #endif
 		}
@@ -760,6 +796,7 @@ void wpa_supplicant_connect(struct wpa_supplicant *wpa_s,
 #ifdef ANDROID_BRCM_P2P_PATCH
 		return -1;
 #else
+		wpa_supplicant_clear_roaming(wpa_s, 0);
 		return;
 #endif /* ANDROID_BRCM_P2P_PATCH */
 	}
@@ -785,6 +822,7 @@ void wpa_supplicant_connect(struct wpa_supplicant *wpa_s,
 #ifdef ANDROID_BRCM_P2P_PATCH
 			return 0;
 #else
+			wpa_supplicant_clear_roaming(wpa_s, 0);
 			return;
 #endif
 		}
@@ -798,6 +836,7 @@ void wpa_supplicant_connect(struct wpa_supplicant *wpa_s,
 	} else {
 		wpa_dbg(wpa_s, MSG_DEBUG, "Already associated with the "
 			"selected AP");
+		wpa_supplicant_clear_roaming(wpa_s, 0);
 	}
 #ifdef ANDROID_BRCM_P2P_PATCH
 	return 0;
@@ -863,10 +902,17 @@ static int wpa_supplicant_need_to_roam(struct wpa_supplicant *wpa_s,
 
 	if (wpa_s->reassociate)
 		return 1; /* explicit request to reassociate */
+	if (wpa_s->roaming)
+		return 1; /* explicit request to roam */
 	if (wpa_s->wpa_state < WPA_ASSOCIATED)
 		return 1; /* we are not associated; continue */
 	if (wpa_s->current_ssid == NULL)
 		return 1; /* unknown current SSID */
+	if (wpa_s->roaming_disabled) {
+		wpa_dbg(wpa_s, MSG_DEBUG, "Skip roam - "
+			"driver doesn't allow roaming now");
+		return 0;
+	}
 	if (wpa_s->current_ssid != ssid)
 		return 1; /* different network block */
 
@@ -923,6 +969,7 @@ static int wpa_supplicant_need_to_roam(struct wpa_supplicant *wpa_s,
 		return 0;
 	}
 
+	wpa_supplicant_mark_roaming(wpa_s);
 	return 1;
 #else
 	return 0;
@@ -1028,6 +1075,7 @@ static int _wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
 		wpa_supplicant_rsn_preauth_scan_results(wpa_s);
 		if (skip)
 			return 0;
+
 #ifdef ANDROID_BRCM_P2P_PATCH
 		if (wpa_supplicant_connect(wpa_s, selected, ssid) < 0) {
 			wpa_dbg(wpa_s, MSG_DEBUG, "Connect Failed");
@@ -1060,9 +1108,9 @@ static int _wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
 				return 0;
 			}
 #endif /* CONFIG_P2P */
-			if(wpa_supplicant_req_sched_scan(wpa_s))
-				wpa_supplicant_req_new_scan(wpa_s, timeout_sec,
-							    timeout_usec);
+			wpa_supplicant_req_sched_scan(wpa_s);
+			wpa_supplicant_req_new_scan(wpa_s, timeout_sec,
+						    timeout_usec);
 		}
 	}
 	return 0;
@@ -1480,7 +1528,7 @@ static void wpa_supplicant_event_assoc(struct wpa_supplicant *wpa_s,
 		struct os_time now, age;
 		os_get_time(&now);
 		os_time_sub(&now, &wpa_s->pending_eapol_rx_time, &age);
-		if (age.sec == 0 && age.usec < 100000 &&
+		if (age.sec == 0 && age.usec < 500000 &&
 		    os_memcmp(wpa_s->pending_eapol_rx_src, bssid, ETH_ALEN) ==
 		    0) {
 			wpa_dbg(wpa_s, MSG_DEBUG, "Process pending EAPOL "
@@ -1524,7 +1572,8 @@ static void wpa_supplicant_event_assoc(struct wpa_supplicant *wpa_s,
 
 
 static void wpa_supplicant_event_disassoc(struct wpa_supplicant *wpa_s,
-					  u16 reason_code)
+					  u16 reason_code,
+					  const u8 *addr)
 {
 	const u8 *bssid;
 	int authenticating;
@@ -1544,13 +1593,21 @@ static void wpa_supplicant_event_disassoc(struct wpa_supplicant *wpa_s,
 		return;
 	}
 
+	if (os_memcmp(wpa_s->bssid, addr, ETH_ALEN)) {
+		/* This may occur during roaming */
+		wpa_dbg(wpa_s, MSG_DEBUG, "Ignore disconnect from"
+			" a BSS which is not the current one");
+		return;
+	}
+
 	if (wpa_s->wpa_state == WPA_4WAY_HANDSHAKE &&
 	    wpa_key_mgmt_wpa_psk(wpa_s->key_mgmt)) {
 		wpa_msg(wpa_s, MSG_INFO, "WPA: 4-Way Handshake failed - "
 			"pre-shared key may be incorrect");
 	}
-	if (!wpa_s->auto_reconnect_disabled ||
-	    wpa_s->key_mgmt == WPA_KEY_MGMT_WPS) {
+	if ((reason_code != 3) &&
+	    (!wpa_s->auto_reconnect_disabled ||
+	     wpa_s->key_mgmt == WPA_KEY_MGMT_WPS)) {
 		wpa_dbg(wpa_s, MSG_DEBUG, "WPA: Auto connect enabled: try to "
 			"reconnect (wps=%d)",
 			wpa_s->key_mgmt == WPA_KEY_MGMT_WPS);
@@ -1996,7 +2053,17 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 			break;
 		}
 #endif /* CONFIG_AP */
-		wpa_supplicant_event_disassoc(wpa_s, reason_code);
+		if (data->deauth_info.reason_code
+		    == WLAN_REASON_PREV_AUTH_NOT_VALID &&
+		    wpa_s->ignore_deauth_event) {
+			wpa_dbg(wpa_s, MSG_DEBUG, "Ignore deauth event"
+				" with reason=2");
+			wpa_s->ignore_deauth_event = 0;
+		} else {
+			wpa_supplicant_event_disassoc(wpa_s,
+						      reason_code,
+						      data->deauth_info.addr);
+		}
 
 #if defined(ANDROID_BRCM_P2P_PATCH) && defined(CONFIG_P2P)
 		wpas_p2p_group_remove_notif(wpa_s, reason_code);
@@ -2317,6 +2384,20 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 			data->signal_change.current_noise,
 			data->signal_change.current_txrate);
 		break;
+	case EVENT_ROAMING_ENABLED:
+		wpa_supplicant_enable_roaming(wpa_s);
+		break;
+	case EVENT_ROAMING_DISABLED:
+		wpa_supplicant_disable_roaming(wpa_s);
+		break;
+
+	case EVENT_START_ROAMING:
+		if (!is_zero_ether_addr(wpa_s->bssid)) {
+			wpa_s->roaming = 1;
+			bgscan_notify_beacon_loss(wpa_s);
+		}
+		break;
+
 	case EVENT_INTERFACE_ENABLED:
 		wpa_dbg(wpa_s, MSG_DEBUG, "Interface was enabled");
 		if (wpa_s->wpa_state == WPA_INTERFACE_DISABLED) {

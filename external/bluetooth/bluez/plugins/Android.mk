@@ -1,4 +1,5 @@
 LOCAL_PATH:= $(call my-dir)
+TIBLUEZVER := $(shell cat $(LOCAL_PATH)/../ti_bluez_version;)
 
 #
 # libplugin
@@ -10,10 +11,14 @@ LOCAL_SRC_FILES:= \
 	hciops.c \
 	mgmtops.c \
 	dbusoob.c \
+	adaptername.c \
+	service.c
 
 LOCAL_CFLAGS:= \
-	-DVERSION=\"4.93\" \
+        -Wno-missing-field-initializers \
+	-DVERSION=\"$(TIBLUEZVER)\" \
 	-DBLUETOOTH_PLUGIN_BUILTIN \
+	-DANDROID_EXPAND_NAME \
 	-DSTORAGEDIR=\"/data/misc/bluetoothd\"
 
 LOCAL_C_INCLUDES:= \
@@ -29,7 +34,7 @@ LOCAL_SHARED_LIBRARIES := \
 	libbluetooth \
 	libcutils \
 	libdbus \
-	libglib \
+	libglib
 
 LOCAL_MODULE_PATH := $(TARGET_OUT_SHARED_LIBRARIES)/bluez-plugin
 LOCAL_UNSTRIPPED_PATH := $(TARGET_OUT_SHARED_LIBRARIES_UNSTRIPPED)/bluez-plugin

@@ -175,7 +175,8 @@ void register_server_service(void)
 void register_device_id(const uint16_t vendor, const uint16_t product,
 						const uint16_t version)
 {
-	const uint16_t spec = 0x0102, source = 0x0002;
+	/* source set to 0x0001 SIG Assigned source */
+	const uint16_t spec = 0x0103, source = 0x0001;
 	const uint8_t primary = 1;
 	sdp_list_t *class_list, *group_list, *profile_list;
 	uuid_t class_uuid, group_uuid;

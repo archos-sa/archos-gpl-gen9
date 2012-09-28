@@ -29,7 +29,6 @@
 #include <netinet/in.h>
 #include <stdio.h>
 #include <errno.h>
-#include <ctype.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -39,24 +38,17 @@
 #include <getopt.h>
 #include <syslog.h>
 #include <sys/time.h>
-#include <sys/stat.h>
-#include <sys/poll.h>
-#include <sys/ioctl.h>
+#include <sys/epoll.h>
 #include <sys/socket.h>
 #include <sys/resource.h>
+#include <sys/stat.h>
 
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/hci.h>
 #include <bluetooth/hci_lib.h>
-
-#include <netdb.h>
-
-#include <glib.h>
-
-#define GHCI_DEV		"/dev/ghci"
+#include <bluetooth/l2cap.h>
 
 #define VHCI_DEV		"/dev/vhci"
-#define VHCI_UDEV		"/dev/hci_vhci"
 
 #define VHCI_MAX_CONN		12
 
@@ -67,20 +59,24 @@ struct vhci_device {
 	uint8_t		features[8];
 	uint8_t		name[248];
 	uint8_t		dev_class[3];
+	uint8_t		scan_enable;
+	uint8_t		ssp_mode;
 	uint8_t		inq_mode;
 	uint8_t		eir_fec;
 	uint8_t		eir_data[HCI_MAX_EIR_LENGTH];
+	uint8_t		le_mode;
+	uint8_t		le_simul;
 	uint16_t	acl_cnt;
 	bdaddr_t	bdaddr;
-	int		fd;
+	int		dev_fd;
+	int		scan_fd;
 	int		dd;
-	GIOChannel	*scan;
 };
 
 struct vhci_conn {
 	bdaddr_t	dest;
 	uint16_t	handle;
-	GIOChannel	*chan;
+	int		fd;
 };
 
 struct vhci_link_info {
@@ -112,29 +108,16 @@ struct btsnoop_pkt {
 
 static uint8_t btsnoop_id[] = { 0x62, 0x74, 0x73, 0x6e, 0x6f, 0x6f, 0x70, 0x00 };
 
-static GMainLoop *event_loop;
+#define MAX_EPOLL_EVENTS 10
 
-static volatile sig_atomic_t __io_canceled;
+static int epoll_fd;
 
-static inline void io_init(void)
-{
-	__io_canceled = 0;
-}
-
-static inline void io_cancel(void)
-{
-	__io_canceled = 1;
-}
+static volatile sig_atomic_t __io_canceled = 0;
 
 static void sig_term(int sig)
 {
-	io_cancel();
-	g_main_loop_quit(event_loop);
+	__io_canceled = 1;
 }
-
-static gboolean io_acl_data(GIOChannel *chan, GIOCondition cond, gpointer data);
-static gboolean io_conn_ind(GIOChannel *chan, GIOCondition cond, gpointer data);
-static gboolean io_hci_data(GIOChannel *chan, GIOCondition cond, gpointer data);
 
 static inline int read_n(int fd, void *buf, int len)
 {
@@ -198,7 +181,8 @@ static int create_snoop(char *file)
 	return fd;
 }
 
-static int write_snoop(int fd, int type, int incoming, unsigned char *buf, int len)
+static int write_snoop(int fd, int type, int incoming,
+				unsigned char *buf, int len)
 {
 	struct btsnoop_pkt pkt;
 	struct timeval tv;
@@ -241,6 +225,40 @@ static struct vhci_conn *conn_get_by_bdaddr(bdaddr_t *ba)
 	return NULL;
 }
 
+static void reset_vdev(void)
+{
+	/* Device settings */
+	vdev.features[0] = 0xff;
+	vdev.features[1] = 0xff;
+	vdev.features[2] = 0x8f;
+	vdev.features[3] = 0xfe;
+	vdev.features[4] = 0x9b;
+	vdev.features[5] = 0xf9;
+	vdev.features[6] = 0x00;
+	vdev.features[7] = 0x80;
+
+	vdev.features[4] |= 0x40;	/* LE Supported */
+	vdev.features[6] |= 0x01;	/* Extended Inquiry Response */
+	vdev.features[6] |= 0x02;	/* BR/EDR and LE */
+	vdev.features[6] |= 0x08;	/* Secure Simple Pairing */
+
+	memset(vdev.name, 0, sizeof(vdev.name));
+	strncpy((char *) vdev.name, "BlueZ (Virtual HCI)",
+							sizeof(vdev.name) - 1);
+
+	vdev.dev_class[0] = 0x00;
+	vdev.dev_class[1] = 0x00;
+	vdev.dev_class[2] = 0x00;
+
+	vdev.scan_enable = 0x00;
+	vdev.ssp_mode = 0x00;
+	vdev.inq_mode = 0x00;
+	vdev.eir_fec = 0x00;
+	memset(vdev.eir_data, 0, sizeof(vdev.eir_data));
+	vdev.le_mode = 0x00;
+	vdev.le_simul = 0x00;
+}
+
 static void command_status(uint16_t ogf, uint16_t ocf, uint8_t status)
 {
 	uint8_t buf[HCI_MAX_FRAME_SIZE], *ptr = buf;
@@ -264,7 +282,7 @@ static void command_status(uint16_t ogf, uint16_t ocf, uint8_t status)
 
 	write_snoop(vdev.dd, HCI_EVENT_PKT, 1, buf, ptr - buf);
 
-	if (write(vdev.fd, buf, ptr - buf) < 0)
+	if (write(vdev.dev_fd, buf, ptr - buf) < 0)
 		syslog(LOG_ERR, "Can't send event: %s(%d)",
 						strerror(errno), errno);
 }
@@ -296,7 +314,7 @@ static void command_complete(uint16_t ogf, uint16_t ocf, int plen, void *data)
 
 	write_snoop(vdev.dd, HCI_EVENT_PKT, 1, buf, ptr - buf);
 
-	if (write(vdev.fd, buf, ptr - buf) < 0)
+	if (write(vdev.dev_fd, buf, ptr - buf) < 0)
 		syslog(LOG_ERR, "Can't send event: %s(%d)",
 						strerror(errno), errno);
 }
@@ -324,7 +342,7 @@ static void connect_request(struct vhci_conn *conn)
 
 	write_snoop(vdev.dd, HCI_EVENT_PKT, 1, buf, ptr - buf);
 
-	if (write(vdev.fd, buf, ptr - buf) < 0)
+	if (write(vdev.dev_fd, buf, ptr - buf) < 0)
 		syslog(LOG_ERR, "Can't send event: %s (%d)",
 						strerror(errno), errno);
 }
@@ -354,9 +372,11 @@ static void connect_complete(struct vhci_conn *conn)
 
 	write_snoop(vdev.dd, HCI_EVENT_PKT, 1, buf, ptr - buf);
 
-	if (write(vdev.fd, buf, ptr - buf) < 0)
+	if (write(vdev.dev_fd, buf, ptr - buf) < 0)
 		syslog(LOG_ERR, "Can't send event: %s (%d)",
 						strerror(errno), errno);
+
+	/* TODO: Add io_acl_data() handling */
 }
 
 static void disconn_complete(struct vhci_conn *conn)
@@ -382,7 +402,7 @@ static void disconn_complete(struct vhci_conn *conn)
 
 	write_snoop(vdev.dd, HCI_EVENT_PKT, 1, buf, ptr - buf);
 
-	if (write(vdev.fd, buf, ptr - buf) < 0)
+	if (write(vdev.dev_fd, buf, ptr - buf) < 0)
 		syslog(LOG_ERR, "Can't send event: %s (%d)",
 						strerror(errno), errno);
 
@@ -412,27 +432,28 @@ static void num_completed_pkts(struct vhci_conn *conn)
 
 	write_snoop(vdev.dd, HCI_EVENT_PKT, 1, buf, ptr - buf);
 
-	if (write(vdev.fd, buf, ptr - buf) < 0)
+	if (write(vdev.dev_fd, buf, ptr - buf) < 0)
 		syslog(LOG_ERR, "Can't send event: %s (%d)",
 						strerror(errno), errno);
 }
 
-static int scan_enable(uint8_t *data)
+static uint8_t scan_enable(uint8_t *data)
 {
+#if 0
+	struct epoll_event scan_event;
 	struct sockaddr_in sa;
-	GIOChannel *sk_io;
 	bdaddr_t ba;
 	int sk, opt;
 
 	if (!(*data & SCAN_PAGE)) {
-		if (vdev.scan) {
-			g_io_channel_shutdown(vdev.scan, TRUE, NULL);
-			vdev.scan = NULL;
+		if (vdev.scan_fd >= 0) {
+			close(vdev.scan_fd);
+			vdev.scan_fd = -1;
 		}
 		return 0;
 	}
 
-	if (vdev.scan)
+	if (vdev.scan_fd >= 0)
 		return 0;
 
 	if ((sk = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
@@ -447,7 +468,7 @@ static int scan_enable(uint8_t *data)
 	baswap(&ba, &vdev.bdaddr);
 	sa.sin_family = AF_INET;
 	memcpy(&sa.sin_addr.s_addr, &ba, sizeof(sa.sin_addr.s_addr));
-	sa.sin_port = *(uint16_t *) &ba.b[4];
+	memcpy(&sa.sin_port, &ba.b[4], sizeof(sa.sin_port));
 	if (bind(sk, (struct sockaddr *) &sa, sizeof(sa))) {
 		syslog(LOG_ERR, "Can't bind socket: %s (%d)",
 						strerror(errno), errno);
@@ -460,14 +481,24 @@ static int scan_enable(uint8_t *data)
 		goto failed;
 	}
 
-	sk_io = g_io_channel_unix_new(sk);
-	g_io_add_watch(sk_io, G_IO_IN | G_IO_NVAL, io_conn_ind, NULL);
-	vdev.scan = sk_io;
+	memset(&scan_event, 0, sizeof(scan_event));
+	scan_event.events = EPOLLIN;
+	scan_event.data.fd = sk;
+
+	if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, sk, &scan_event) < 0) {
+		syslog(LOG_ERR, "Failed to setup scan event watch");
+		goto failed;
+	}
+
+	vdev.scan_fd = sk;
 	return 0;
 
 failed:
 	close(sk);
 	return 1;
+#endif
+
+	return data[0];
 }
 
 static void accept_connection(uint8_t *data)
@@ -479,9 +510,6 @@ static void accept_connection(uint8_t *data)
 		return;
 
 	connect_complete(conn);
-
-	g_io_add_watch(conn->chan, G_IO_IN | G_IO_NVAL | G_IO_HUP,
-			io_acl_data, (gpointer) conn);
 }
 
 static void close_connection(struct vhci_conn *conn)
@@ -492,8 +520,7 @@ static void close_connection(struct vhci_conn *conn)
 	syslog(LOG_INFO, "Closing connection %s handle %d",
 					addr, conn->handle);
 
-	g_io_channel_shutdown(conn->chan, TRUE, NULL);
-	g_io_channel_unref(conn->chan);
+	close(conn->fd);
 
 	vconn[conn->handle - 1] = NULL;
 	disconn_complete(conn);
@@ -557,7 +584,7 @@ do_connect:
 	baswap(&ba, &cp->bdaddr);
 	sa.sin_family = AF_INET;
 	memcpy(&sa.sin_addr.s_addr, &ba, sizeof(sa.sin_addr.s_addr));
-	sa.sin_port = *(uint16_t *) &ba.b[4];
+	memcpy(&sa.sin_port, &ba.b[4], sizeof(sa.sin_port));
 	if (connect(sk, (struct sockaddr *) &sa, sizeof(sa)) < 0) {
 		syslog(LOG_ERR, "Can't connect: %s (%d)",
 						strerror(errno), errno);
@@ -585,18 +612,13 @@ do_connect:
 
 	vconn[h] = conn;
 	conn->handle = h + 1;
-	conn->chan = g_io_channel_unix_new(sk);
+	conn->fd = sk;
 
 	connect_complete(conn);
-	g_io_add_watch(conn->chan, G_IO_IN | G_IO_NVAL | G_IO_HUP,
-				io_acl_data, (gpointer) conn);
-	return;
 }
 
 static void hci_link_control(uint16_t ocf, int plen, uint8_t *data)
 {
-	uint8_t status;
-
 	const uint16_t ogf = OGF_LINK_CTL;
 
 	switch (ocf) {
@@ -616,32 +638,31 @@ static void hci_link_control(uint16_t ocf, int plen, uint8_t *data)
 		break;
 
 	default:
-		status = 0x01;
-		command_complete(ogf, ocf, 1, &status);
+		command_status(ogf, ocf, 0x01);
 		break;
 	}
 }
 
 static void hci_link_policy(uint16_t ocf, int plen, uint8_t *data)
 {
-	uint8_t status;
-
 	const uint16_t ogf = OGF_INFO_PARAM;
 
 	switch (ocf) {
 	default:
-		status = 0x01;
-		command_complete(ogf, ocf, 1, &status);
+		command_status(ogf, ocf, 0x01);
 		break;
 	}
 }
 
 static void hci_host_control(uint16_t ocf, int plen, uint8_t *data)
 {
+	read_scan_enable_rp se;
 	read_local_name_rp ln;
 	read_class_of_dev_rp cd;
 	read_inquiry_mode_rp im;
 	read_ext_inquiry_response_rp ir;
+	read_simple_pairing_mode_rp pm;
+	read_le_host_supported_rp hs;
 	uint8_t status;
 
 	const uint16_t ogf = OGF_HOST_CTL;
@@ -649,6 +670,7 @@ static void hci_host_control(uint16_t ocf, int plen, uint8_t *data)
 	switch (ocf) {
 	case OCF_RESET:
 		status = 0x00;
+		reset_vdev();
 		command_complete(ogf, ocf, 1, &status);
 		break;
 
@@ -675,8 +697,15 @@ static void hci_host_control(uint16_t ocf, int plen, uint8_t *data)
 		command_complete(ogf, ocf, 1, &status);
 		break;
 
+	case OCF_READ_SCAN_ENABLE:
+		se.status = 0x00;
+		se.enable = vdev.scan_enable;
+		command_complete(ogf, ocf, sizeof(se), &se);
+		break;
+
 	case OCF_WRITE_SCAN_ENABLE:
-		status = scan_enable(data);
+		status = 0x00;
+		vdev.scan_enable = scan_enable(data);
 		command_complete(ogf, ocf, 1, &status);
 		break;
 
@@ -728,9 +757,34 @@ static void hci_host_control(uint16_t ocf, int plen, uint8_t *data)
 		command_complete(ogf, ocf, 1, &status);
 		break;
 
-	default:
-		status = 0x01;
+	case OCF_READ_SIMPLE_PAIRING_MODE:
+		pm.status = 0x00;
+		pm.mode = vdev.ssp_mode;
+		command_complete(ogf, ocf, sizeof(pm), &pm);
+		break;
+
+	case OCF_WRITE_SIMPLE_PAIRING_MODE:
+		status = 0x00;
+		vdev.ssp_mode = data[0];
 		command_complete(ogf, ocf, 1, &status);
+		break;
+
+	case OCF_READ_LE_HOST_SUPPORTED:
+		hs.status = 0x00;
+		hs.le = vdev.le_mode;
+		hs.simul = vdev.le_simul;
+		command_complete(ogf, ocf, sizeof(hs), &hs);
+		break;
+
+	case OCF_WRITE_LE_HOST_SUPPORTED:
+		status = 0x00;
+		vdev.le_mode = data[0];
+		vdev.le_simul = data[1];
+		command_complete(ogf, ocf, 1, &status);
+		break;
+
+	default:
+		command_status(ogf, ocf, 0x01);
 		break;
 	}
 }
@@ -742,17 +796,16 @@ static void hci_info_param(uint16_t ocf, int plen, uint8_t *data)
 	read_local_ext_features_rp ef;
 	read_buffer_size_rp bs;
 	read_bd_addr_rp ba;
-	uint8_t status;
 
 	const uint16_t ogf = OGF_INFO_PARAM;
 
 	switch (ocf) {
 	case OCF_READ_LOCAL_VERSION:
 		lv.status = 0x00;
-		lv.hci_ver = 0x03;
+		lv.hci_ver = 0x06;
 		lv.hci_rev = htobs(0x0000);
-		lv.lmp_ver = 0x03;
-		lv.manufacturer = htobs(29);
+		lv.lmp_ver = 0x06;
+		lv.manufacturer = htobs(63);
 		lv.lmp_subver = htobs(0x0000);
 		command_complete(ogf, ocf, sizeof(lv), &lv);
 		break;
@@ -767,8 +820,15 @@ static void hci_info_param(uint16_t ocf, int plen, uint8_t *data)
 		ef.status = 0x00;
 		if (*data == 0) {
 			ef.page_num = 0;
-			ef.max_page_num = 0;
+			ef.max_page_num = 1;
 			memcpy(ef.features, vdev.features, 8);
+		} else if (*data == 1) {
+			ef.page_num = 1;
+			ef.max_page_num = 1;
+			memset(ef.features, 0, 8);
+			ef.features[0] |= (!!vdev.ssp_mode << 0);
+			ef.features[0] |= (!!vdev.le_mode << 1);
+			ef.features[0] |= (!!vdev.le_simul << 2);
 		} else {
 			ef.page_num = *data;
 			ef.max_page_num = 0;
@@ -793,8 +853,55 @@ static void hci_info_param(uint16_t ocf, int plen, uint8_t *data)
 		break;
 
 	default:
-		status = 0x01;
-		command_complete(ogf, ocf, 1, &status);
+		command_status(ogf, ocf, 0x01);
+		break;
+	}
+}
+
+static void hci_status_param(uint16_t ocf, int plen, uint8_t *data)
+{
+	read_local_amp_info_rp ai;
+
+	const uint16_t ogf = OGF_STATUS_PARAM;
+
+	switch (ocf) {
+	case OCF_READ_LOCAL_AMP_INFO:
+		memset(&ai, 0, sizeof(ai));
+
+		/* BT only */
+		ai.amp_status = 0x01;
+		ai.max_pdu_size = htobl(L2CAP_DEFAULT_MTU);
+		ai.controller_type = HCI_AMP;
+		ai.max_amp_assoc_length = htobl(HCI_MAX_ACL_SIZE);
+		/* No flushing at all */
+		ai.max_flush_timeout = 0xFFFFFFFF;
+		ai.best_effort_flush_timeout = 0xFFFFFFFF;
+
+		command_complete(ogf, ocf, sizeof(ai), &ai);
+		break;
+
+	default:
+		command_status(ogf, ocf, 0x01);
+		break;
+	}
+}
+
+static void hci_le_control(uint16_t ocf, int plen, uint8_t *data)
+{
+	le_read_buffer_size_rp bs;
+
+	const uint16_t ogf = OGF_LE_CTL;
+
+	switch (ocf) {
+	case OCF_LE_READ_BUFFER_SIZE:
+		bs.status = 0;
+		bs.pkt_len = htobs(VHCI_ACL_MTU);
+		bs.max_pkt = htobs(VHCI_ACL_MAX_PKT);
+		command_complete(ogf, ocf, sizeof(bs), &bs);
+		break;
+
+	default:
+		command_status(ogf, ocf, 0x01);
 		break;
 	}
 }
@@ -828,6 +935,18 @@ static void hci_command(uint8_t *data)
 	case OGF_INFO_PARAM:
 		hci_info_param(ocf, ch->plen, ptr);
 		break;
+
+	case OGF_STATUS_PARAM:
+		hci_status_param(ocf, ch->plen, ptr);
+		break;
+
+	case OGF_LE_CTL:
+		hci_le_control(ocf, ch->plen, ptr);
+		break;
+
+	default:
+		command_status(ogf, ocf, 0x01);
+		break;
 	}
 }
 
@@ -836,7 +955,6 @@ static void hci_acl_data(uint8_t *data)
 	hci_acl_hdr *ah = (void *) data;
 	struct vhci_conn *conn;
 	uint16_t handle;
-	int fd;
 
 	handle = acl_handle(btohs(ah->handle));
 
@@ -845,8 +963,7 @@ static void hci_acl_data(uint8_t *data)
 		return;
 	}
 
-	fd = g_io_channel_unix_get_fd(conn->chan);
-	if (write_n(fd, data, btohs(ah->dlen) + HCI_ACL_HDR_SIZE) < 0) {
+	if (write_n(conn->fd, data, btohs(ah->dlen) + HCI_ACL_HDR_SIZE) < 0) {
 		close_connection(conn);
 		return;
 	}
@@ -858,39 +975,28 @@ static void hci_acl_data(uint8_t *data)
 	}
 }
 
-static gboolean io_acl_data(GIOChannel *chan, GIOCondition cond, gpointer data)
+#if 0
+static void io_acl_data(void *data)
 {
-	struct vhci_conn *conn = (struct vhci_conn *) data;
+	struct vhci_conn *conn = data;
 	unsigned char buf[HCI_MAX_FRAME_SIZE], *ptr;
 	hci_acl_hdr *ah;
 	uint16_t flags;
-	int fd, len;
-
-	if (cond & G_IO_NVAL) {
-		g_io_channel_unref(chan);
-		return FALSE;
-	}
-
-	if (cond & G_IO_HUP) {
-		close_connection(conn);
-		return FALSE;
-	}
-
-	fd = g_io_channel_unix_get_fd(chan);
+	int len;
 
 	ptr = buf + 1;
-	if (read_n(fd, ptr, HCI_ACL_HDR_SIZE) <= 0) {
+	if (read_n(conn->fd, ptr, HCI_ACL_HDR_SIZE) <= 0) {
 		close_connection(conn);
-		return FALSE;
+		return;
 	}
 
 	ah = (void *) ptr;
 	ptr += HCI_ACL_HDR_SIZE;
 
 	len = btohs(ah->dlen);
-	if (read_n(fd, ptr, len) <= 0) {
+	if (read_n(conn->fd, ptr, len) <= 0) {
 		close_connection(conn);
-		return FALSE;
+		return;
 	}
 
 	buf[0] = HCI_ACLDATA_PKT;
@@ -901,38 +1007,32 @@ static gboolean io_acl_data(GIOChannel *chan, GIOCondition cond, gpointer data)
 
 	write_snoop(vdev.dd, HCI_ACLDATA_PKT, 1, buf, len);
 
-	if (write(vdev.fd, buf, len) < 0)
-		return FALSE;
-
-	return TRUE;
+	if (write(vdev.dev_fd, buf, len) < 0)
+		syslog(LOG_ERR, "ACL data write error");
 }
+#endif
 
-static gboolean io_conn_ind(GIOChannel *chan, GIOCondition cond, gpointer data)
+static void io_conn_ind(void)
 {
 	struct vhci_link_info info;
 	struct vhci_conn *conn;
 	struct sockaddr_in sa;
 	socklen_t len;
-	int sk, nsk, h;
-
-	if (cond & G_IO_NVAL)
-		return FALSE;
-
-	sk = g_io_channel_unix_get_fd(chan);
+	int nsk, h;
 
 	len = sizeof(sa);
-	if ((nsk = accept(sk, (struct sockaddr *) &sa, &len)) < 0)
-		return TRUE;
+	if ((nsk = accept(vdev.scan_fd, (struct sockaddr *) &sa, &len)) < 0)
+		return;
 
 	if (read_n(nsk, &info, sizeof(info)) < 0) {
 		syslog(LOG_ERR, "Can't read link info");
-		return TRUE;
+		return;
 	}
 
 	if (!(conn = malloc(sizeof(*conn)))) {
 		syslog(LOG_ERR, "Can't alloc new connection");
 		close(nsk);
-		return TRUE;
+		return;
 	}
 
 	bacpy(&conn->dest, &info.bdaddr);
@@ -944,37 +1044,31 @@ static gboolean io_conn_ind(GIOChannel *chan, GIOCondition cond, gpointer data)
 	syslog(LOG_ERR, "Too many connections");
 	free(conn);
 	close(nsk);
-	return TRUE;
+	return;
 
 accepted:
 	vconn[h] = conn;
 	conn->handle = h + 1;
-	conn->chan = g_io_channel_unix_new(nsk);
+	conn->fd = nsk;
 	connect_request(conn);
-
-	return TRUE;
 }
 
-static gboolean io_hci_data(GIOChannel *chan, GIOCondition cond, gpointer data)
+static void io_hci_data(void)
 {
 	unsigned char buf[HCI_MAX_FRAME_SIZE], *ptr;
 	int type;
 	ssize_t len;
-	int fd;
 
 	ptr = buf;
 
-	fd = g_io_channel_unix_get_fd(chan);
-
-	len = read(fd, buf, sizeof(buf));
+	len = read(vdev.dev_fd, buf, sizeof(buf));
 	if (len < 0) {
 		if (errno == EAGAIN)
-			return TRUE;
+			return;
 
 		syslog(LOG_ERR, "Read failed: %s (%d)", strerror(errno), errno);
-		g_io_channel_unref(chan);
-		g_main_loop_quit(event_loop);
-		return FALSE;
+		__io_canceled = 1;
+		return;
 	}
 
 	type = *ptr++;
@@ -994,8 +1088,6 @@ static gboolean io_hci_data(GIOChannel *chan, GIOCondition cond, gpointer data)
 		syslog(LOG_ERR, "Unknown packet type 0x%2.2x", type);
 		break;
 	}
-
-	return TRUE;
 }
 
 static int getbdaddrbyname(char *str, bdaddr_t *ba)
@@ -1015,22 +1107,13 @@ static int getbdaddrbyname(char *str, bdaddr_t *ba)
 		return 0;
 	}
 
-	if (n == 1) {
-		/* IP address + port */
-		struct hostent *hent;
+	if (n == 0) {
+		/* loopback port */
+		in_addr_t addr = INADDR_LOOPBACK;
 		bdaddr_t b;
-		char *ptr;
 
-		ptr = strchr(str, ':');
-		*ptr++ = 0;
-
-		if (!(hent = gethostbyname(str))) {
-			fprintf(stderr, "Can't resolve %s\n", str);
-			return -2;
-		}
-
-		memcpy(&b, hent->h_addr, 4);
-		*(uint16_t *) (&b.b[4]) = htons(atoi(ptr));
+		memcpy(&b, &addr, 4);
+		*(uint16_t *) (&b.b[4]) = htons(atoi(str));
 		baswap(ba, &b);
 
 		return 0;
@@ -1041,181 +1124,53 @@ static int getbdaddrbyname(char *str, bdaddr_t *ba)
 	return -1;
 }
 
-static void rewrite_bdaddr(unsigned char *buf, int len, bdaddr_t *bdaddr)
-{
-	hci_event_hdr *eh;
-	unsigned char *ptr = buf;
-	int type;
-
-	if (!bdaddr)
-		return;
-
-	if (!bacmp(bdaddr, BDADDR_ANY))
-		return;
-
-	type = *ptr++;
-
-	switch (type) {
-	case HCI_EVENT_PKT:
-		eh = (hci_event_hdr *) ptr;
-		ptr += HCI_EVENT_HDR_SIZE;
-
-		if (eh->evt == EVT_CMD_COMPLETE) {
-			evt_cmd_complete *cc = (void *) ptr;
-
-			ptr += EVT_CMD_COMPLETE_SIZE;
-
-			if (cc->opcode == htobs(cmd_opcode_pack(OGF_INFO_PARAM,
-						OCF_READ_BD_ADDR))) {
-				bacpy((bdaddr_t *) (ptr + 1), bdaddr);
-			}
-		}
-		break;
-	}
-}
-
-static int run_proxy(int fd, int dev, bdaddr_t *bdaddr)
-{
-	unsigned char buf[HCI_MAX_FRAME_SIZE + 1];
-	struct hci_dev_info di;
-	struct hci_filter flt;
-	struct pollfd p[2];
-	int dd, err, len, need_raw;
-
-	dd = hci_open_dev(dev);
-	if (dd < 0) {
-		syslog(LOG_ERR, "Can't open device hci%d: %s (%d)",
-						dev, strerror(errno), errno);
-		return 1;
-	}
-
-	if (hci_devinfo(dev, &di) < 0) {
-		syslog(LOG_ERR, "Can't get device info for hci%d: %s (%d)",
-						dev, strerror(errno), errno);
-		hci_close_dev(dd);
-		return 1;
-	}
-
-	need_raw = !hci_test_bit(HCI_RAW, &di.flags);
-
-	hci_filter_clear(&flt);
-	hci_filter_all_ptypes(&flt);
-	hci_filter_all_events(&flt);
-
-	if (setsockopt(dd, SOL_HCI, HCI_FILTER, &flt, sizeof(flt)) < 0) {
-		syslog(LOG_ERR, "Can't set filter for hci%d: %s (%d)",
-						dev, strerror(errno), errno);
-		hci_close_dev(dd);
-		return 1;
-	}
-
-	if (need_raw) {
-		if (ioctl(dd, HCISETRAW, 1) < 0) {
-			syslog(LOG_ERR, "Can't set raw mode on hci%d: %s (%d)",
-						dev, strerror(errno), errno);
-			hci_close_dev(dd);
-			return 1;
-		}
-	}
-
-	p[0].fd = fd;
-	p[0].events = POLLIN;
-	p[1].fd = dd;
-	p[1].events = POLLIN;
-
-	while (!__io_canceled) {
-		p[0].revents = 0;
-		p[1].revents = 0;
-		err = poll(p, 2, 500);
-		if (err < 0)
-			break;
-		if (!err)
-			continue;
-
-		if (p[0].revents & POLLIN) {
-			len = read(fd, buf, sizeof(buf));
-			if (len > 0) {
-				rewrite_bdaddr(buf, len, bdaddr);
-				err = write(dd, buf, len);
-			}
-		}
-
-		if (p[1].revents & POLLIN) {
-			len = read(dd, buf, sizeof(buf));
-			if (len > 0) {
-				rewrite_bdaddr(buf, len, bdaddr);
-				err = write(fd, buf, len);
-			}
-		}
-	}
-
-	if (need_raw) {
-		if (ioctl(dd, HCISETRAW, 0) < 0)
-			syslog(LOG_ERR, "Can't clear raw mode on hci%d: %s (%d)",
-						dev, strerror(errno), errno);
-	}
-
-	hci_close_dev(dd);
-
-	syslog(LOG_INFO, "Exit");
-
-	return 0;
-}
-
 static void usage(void)
 {
 	printf("hciemu - HCI emulator ver %s\n", VERSION);
 	printf("Usage: \n");
-	printf("\thciemu [options] local_address\n"
+	printf("\thciemu [options] port_number\n"
 		"Options:\n"
-		"\t[-d device] use specified device\n"
-		"\t[-b bdaddr] emulate specified address\n"
+		"\t[-d device] use specified device node\n"
 		"\t[-s file] create snoop file\n"
 		"\t[-n] do not detach\n"
 		"\t[-h] help, you are looking at it\n");
 }
 
-static struct option main_options[] = {
+static const struct option options[] = {
 	{ "device",	1, 0, 'd' },
 	{ "bdaddr",	1, 0, 'b' },
 	{ "snoop",	1, 0, 's' },
 	{ "nodetach",	0, 0, 'n' },
 	{ "help",	0, 0, 'h' },
-	{ 0 }
+	{ }
 };
 
 int main(int argc, char *argv[])
 {
+	int exitcode = EXIT_FAILURE;
 	struct sigaction sa;
-	GIOChannel *dev_io;
 	char *device = NULL, *snoop = NULL;
-	bdaddr_t bdaddr;
-	int fd, dd, opt, detach = 1, dev = -1;
+	int device_fd;
+	struct epoll_event device_event;
+	int dd, opt, detach = 1;
 
-	bacpy(&bdaddr, BDADDR_ANY);
-
-	while ((opt=getopt_long(argc, argv, "d:b:s:nh", main_options, NULL)) != EOF) {
+	while ((opt=getopt_long(argc, argv, "d:s:nh", options, NULL)) != EOF) {
 		switch(opt) {
 		case 'd':
 			device = strdup(optarg);
 			break;
-
-		case 'b':
-			str2ba(optarg, &bdaddr);
-			break;
-
 		case 's':
 			snoop = strdup(optarg);
 			break;
-
 		case 'n':
 			detach = 0;
 			break;
-
 		case 'h':
-		default:
 			usage();
 			exit(0);
+		default:
+			usage();
+			exit(1);
 		}
 	}
 
@@ -1228,16 +1183,8 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
-	if (strlen(argv[0]) > 3 && !strncasecmp(argv[0], "hci", 3)) {
-		dev = hci_devid(argv[0]);
-		if (dev < 0) {
-			perror("Invalid device");
-			exit(1);
-		}
-	} else {
-		if (getbdaddrbyname(argv[0], &vdev.bdaddr) < 0)
-			exit(1);
-	}
+	if (getbdaddrbyname(argv[0], &vdev.bdaddr) < 0)
+		exit(1);
 
 	if (detach) {
 		if (daemon(0, 0)) {
@@ -1260,32 +1207,19 @@ int main(int argc, char *argv[])
 	sigaction(SIGTERM, &sa, NULL);
 	sigaction(SIGINT,  &sa, NULL);
 
-	io_init();
-
-	if (!device && dev >= 0)
-		device = strdup(GHCI_DEV);
+	if (!device)
+		device = strdup(VHCI_DEV);
 
 	/* Open and create virtual HCI device */
-	if (device) {
-		fd = open(device, O_RDWR);
-		if (fd < 0) {
-			syslog(LOG_ERR, "Can't open device %s: %s (%d)",
-						device, strerror(errno), errno);
-			free(device);
-			exit(1);
-		}
+	device_fd = open(device, O_RDWR);
+	if (device_fd < 0) {
+		syslog(LOG_ERR, "Can't open device %s: %s (%d)",
+					device, strerror(errno), errno);
 		free(device);
-	} else {
-		fd = open(VHCI_DEV, O_RDWR);
-		if (fd < 0) {
-			fd = open(VHCI_UDEV, O_RDWR);
-			if (fd < 0) {
-				syslog(LOG_ERR, "Can't open device %s: %s (%d)",
-						VHCI_DEV, strerror(errno), errno);
-				exit(1);
-			}
-		}
+		return exitcode;
 	}
+
+	free(device);
 
 	/* Create snoop file */
 	if (snoop) {
@@ -1298,50 +1232,61 @@ int main(int argc, char *argv[])
 		dd = -1;
 
 	/* Create event loop */
-	event_loop = g_main_loop_new(NULL, FALSE);
+	epoll_fd = epoll_create1(EPOLL_CLOEXEC);
+	if (epoll_fd < 0) {
+		perror("Failed to create epoll descriptor");
+		goto close_device;
+	}
 
-	if (dev >= 0)
-		return run_proxy(fd, dev, &bdaddr);
+	reset_vdev();
 
-	/* Device settings */
-	vdev.features[0] = 0xff;
-	vdev.features[1] = 0xff;
-	vdev.features[2] = 0x8f;
-	vdev.features[3] = 0xfe;
-	vdev.features[4] = 0x9b;
-	vdev.features[5] = 0xf9;
-	vdev.features[6] = 0x01;
-	vdev.features[7] = 0x80;
-
-	memset(vdev.name, 0, sizeof(vdev.name));
-	strncpy((char *) vdev.name, "BlueZ (Virtual HCI)",
-							sizeof(vdev.name) - 1);
-
-	vdev.dev_class[0] = 0x00;
-	vdev.dev_class[1] = 0x00;
-	vdev.dev_class[2] = 0x00;
-
-	vdev.inq_mode = 0x00;
-	vdev.eir_fec = 0x00;
-	memset(vdev.eir_data, 0, sizeof(vdev.eir_data));
-
-	vdev.fd = fd;
+	vdev.dev_fd = device_fd;
 	vdev.dd = dd;
 
-	dev_io = g_io_channel_unix_new(fd);
-	g_io_add_watch(dev_io, G_IO_IN, io_hci_data, NULL);
+	memset(&device_event, 0, sizeof(device_event));
+	device_event.events = EPOLLIN;
+	device_event.data.fd = device_fd;
+
+	if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, device_fd, &device_event) < 0) {
+		perror("Failed to setup device event watch");
+		goto close_device;
+	}
 
 	setpriority(PRIO_PROCESS, 0, -19);
 
 	/* Start event processor */
-	g_main_loop_run(event_loop);
+	for (;;) {
+		struct epoll_event events[MAX_EPOLL_EVENTS];
+		int n, nfds;
 
-	close(fd);
+		if (__io_canceled)
+			break;
+
+		nfds = epoll_wait(epoll_fd, events, MAX_EPOLL_EVENTS, -1);
+		if (nfds < 0)
+			continue;
+
+		for (n = 0; n < nfds; n++) {
+			if (events[n].data.fd == vdev.dev_fd)
+				io_hci_data();
+			else if (events[n].data.fd == vdev.scan_fd)
+				io_conn_ind();
+		}
+	}
+
+	exitcode = EXIT_SUCCESS;
+
+	epoll_ctl(epoll_fd, EPOLL_CTL_DEL, device_fd, NULL);
+
+close_device:
+	close(device_fd);
 
 	if (dd >= 0)
 		close(dd);
 
+	close(epoll_fd);
+
 	syslog(LOG_INFO, "Exit");
 
-	return 0;
+	return exitcode;
 }

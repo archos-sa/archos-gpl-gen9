@@ -60,6 +60,8 @@ int hci_inquiry(int dev_id, int len, int num_rsp, const uint8_t *lap, inquiry_in
 int hci_devinfo(int dev_id, struct hci_dev_info *di);
 int hci_devba(int dev_id, bdaddr_t *bdaddr);
 int hci_devid(const char *str);
+int hci_setflowspec(int dev_id, uint16_t handle, uint8_t flow_dir, uint8_t service_type, uint32_t token_rate,
+		uint32_t bucket_size, uint32_t peak_bandwidth, uint32_t latency );
 
 int hci_read_local_name(int dd, int len, char *name, int to);
 int hci_write_local_name(int dd, const char *name, int to);
@@ -225,6 +227,7 @@ static inline int hci_filter_test_opcode(int opcode, struct hci_filter *f)
 {
 	return (f->opcode == opcode);
 }
+
 
 #ifdef __cplusplus
 }

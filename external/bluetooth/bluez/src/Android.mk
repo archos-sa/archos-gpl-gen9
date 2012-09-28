@@ -5,6 +5,7 @@ LOCAL_PATH:= $(call my-dir)
 #
 
 include $(CLEAR_VARS)
+TIBLUEZVER := $(shell cat $(LOCAL_PATH)/../ti_bluez_version;)
 
 LOCAL_SRC_FILES:= \
 	android_bluez.c \
@@ -27,6 +28,7 @@ LOCAL_SRC_FILES:= \
 	sdpd-service.c \
 	sdpd-server.c \
 	sdpd-database.c \
+	sdp-client.c \
 	sdp-xml.c \
 	storage.c \
 	textfile.c \
@@ -36,9 +38,12 @@ LOCAL_SRC_FILES:= \
 	../attrib/gatt.c \
 	../attrib/gattrib.c \
 	../attrib/utils.c \
+	../attrib/gatt-service.c \
 
 LOCAL_CFLAGS:= \
-	-DVERSION=\"4.93\" \
+        -Wno-missing-field-initializers \
+	-DVERSION=\"$(TIBLUEZVER)\" \
+	-DNEED_G_LIST_FREE_FULL \
 	-DSTORAGEDIR=\"/data/misc/bluetoothd\" \
 	-DCONFIGDIR=\"/etc/bluetooth\" \
 	-DSERVICEDIR=\"/system/bin\" \
@@ -46,6 +51,7 @@ LOCAL_CFLAGS:= \
 	-DANDROID_SET_AID_AND_CAP \
 	-DANDROID_EXPAND_NAME \
 	-DOUIFILE=\"/data/misc/bluetoothd/ouifile\" \
+	-DANDROID \
 
 ifeq ($(BOARD_HAVE_BLUETOOTH_BCM),true)
 LOCAL_CFLAGS += \
@@ -53,6 +59,7 @@ LOCAL_CFLAGS += \
 endif
 
 LOCAL_C_INCLUDES:= \
+	$(LOCAL_PATH)/../ \
 	$(LOCAL_PATH)/../attrib \
 	$(LOCAL_PATH)/../btio \
 	$(LOCAL_PATH)/../lib \
@@ -86,6 +93,10 @@ include $(CLEAR_VARS)
 
 LOCAL_SHARED_LIBRARIES := \
 	libbluetoothd
+
+LOCAL_CFLAGS += \
+        -Wno-missing-field-initializers \
+	-DVERSION=\"$(TIBLUEZVER)\" \
 
 LOCAL_MODULE:=bluetoothd
 

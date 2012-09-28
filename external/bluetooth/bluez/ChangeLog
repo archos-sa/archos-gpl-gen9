@@ -1,3 +1,62 @@
+ver 4.99:
+	Fix issue with missing retries for BNEP connection setup.
+	Fix issue with not showing name if first EIR has no details.
+	Fix issue with running SDP discovery for LE devices.
+	Add support for GATT using 128-bit Bluetooth UUIDs.
+	Add support for retrieving key size information.
+	Add support for storing Long Term Keys.
+	Add support for Proximity Reporter API.
+	Add support for KeyboardDisplay IO capability.
+	Add support for version 1.0 of management API.
+	Add support for monitoring interface.
+
+ver 4.98:
+	Fix issue with adapter list upon initialization failure.
+	Fix issue with missing legacy property for Low Energy.
+	Fix issue with missing EIR information handling.
+	Fix issue with device address type tracking.
+	Fix issue with alert level characteristic.
+	Fix issue with headset shutdown handling.
+	Fix issue with Wiimote address handling.
+	Add support for advanced l2test options.
+	Add support for attribute protocol and multiple adapters.
+
+ver 4.97:
+	Update support for proximity profile.
+	Fix issue with SBC audio decoding quality.
+	Fix multiple issues with HFP support.
+	Fix multiple issues with A2DP support.
+	Fix multiple issues with AVDTP support.
+	Fix multiple issues with AVRCP support.
+	Add support for AVRCP meta-data transfer.
+	Add support for Bluetooth based thermometers.
+
+ver 4.96:
+	Fix issue with race condition in AVDTP stream start.
+	Fix issue with global adapter offline switching.
+	Fix issue with pairing and No Bonding devices.
+	Add support for Nintendo Wii Remote pairing.
+
+ver 4.95:
+	Fix issue with AVCTP replies with invalid PID.
+	Fix issue with AVRCP and unknown packet types.
+	Fix issue with AVRCP not using NOT_IMPLEMENTED correctly.
+	Fix issue with AVDTP discovery if all endpoints are in use.
+	Fix issue with invalid memory writes and media support.
+	Fix issue with not removing device alias and unbonding.
+	Fix issue with device disconnects and offline mode handling.
+	Add support for setting adapter name based on machine-info.
+	Add support for systemd service configuration.
+
+ver 4.94:
+	Fix issue with invalid read of memory in various modules.
+	Fix issue with buffer overflow when sending AVDTP commands.
+	Fix issue with response to vendor dependent AVRCP commands.
+	Fix issue with headset when not able to reply with ERROR.
+	Fix issue with crash when creating a device from storage.
+	Fix issue with handling non UTF-8 devices names.
+	Add support for improved discovery procedure.
+
 ver 4.93:
 	Fix issue with property type and Health Main channel.
 	Fix issue with crash when removing devices.

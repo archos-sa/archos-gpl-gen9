@@ -81,11 +81,16 @@ static inline int wpa_drv_scan(struct wpa_supplicant *wpa_s,
 
 static inline int wpa_drv_sched_scan(struct wpa_supplicant *wpa_s,
 				     struct wpa_driver_scan_params *params,
-				     u32 interval)
+				     u32 long_interval,
+				     u32 short_interval,
+				     u8 num_short_intervals)
 {
 	if (wpa_s->driver->sched_scan)
 		return wpa_s->driver->sched_scan(wpa_s->drv_priv,
-						 params, interval);
+						 params,
+						 long_interval,
+						 short_interval,
+						 num_short_intervals);
 	return -1;
 }
 
@@ -337,15 +342,11 @@ static inline int wpa_drv_send_ft_action(struct wpa_supplicant *wpa_s,
 	return -1;
 }
 
-static inline int wpa_drv_set_beacon(struct wpa_supplicant *wpa_s,
-				     const u8 *head, size_t head_len,
-				     const u8 *tail, size_t tail_len,
-				     int dtim_period, int beacon_int)
+static inline int wpa_drv_set_ap(struct wpa_supplicant *wpa_s,
+				 struct wpa_driver_ap_params *params)
 {
-	if (wpa_s->driver->set_beacon)
-		return wpa_s->driver->set_beacon(wpa_s->drv_priv, head,
-						 head_len, tail, tail_len,
-						 dtim_period, beacon_int);
+	if (wpa_s->driver->set_ap)
+		return wpa_s->driver->set_ap(wpa_s->drv_priv, params);
 	return -1;
 }
 
@@ -488,6 +489,13 @@ static inline int wpa_drv_deinit_ap(struct wpa_supplicant *wpa_s)
 {
 	if (wpa_s->driver->deinit_ap)
 		return wpa_s->driver->deinit_ap(wpa_s->drv_priv);
+	return 0;
+}
+
+static inline int wpa_drv_deinit_p2p_cli(struct wpa_supplicant *wpa_s)
+{
+	if (wpa_s->driver->deinit_p2p_cli)
+		return wpa_s->driver->deinit_p2p_cli(wpa_s->drv_priv);
 	return 0;
 }
 

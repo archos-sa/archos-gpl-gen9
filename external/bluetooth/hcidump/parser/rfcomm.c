@@ -32,15 +32,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-
-#include <bluetooth/bluetooth.h>
-
-#include "parser.h"
-#include "rfcomm.h"
-#include "sdp.h"
+#include "parser/parser.h"
+#include "parser/rfcomm.h"
+#include "parser/sdp.h"
 
 static char *cr_str[] = {
 	"RSP",
@@ -55,11 +49,10 @@ static void print_rfcomm_hdr(long_frame_head* head, uint8_t *ptr, int len)
 	address_field addr = head->addr;
 	uint8_t ctr = head->control;
 	uint16_t ilen = head->length.bits.len;
-	uint8_t ctr_type,pf,dlci,fcs;
+	uint8_t pf, dlci, fcs;
 
 	dlci     = GET_DLCI(addr);
 	pf       = GET_PF(ctr);
-	ctr_type = CLR_PF(ctr);
 	fcs      = *(ptr + len - 1);
 
 	printf("cr %d dlci %d pf %d ilen %d fcs 0x%x ", addr.cr, dlci, pf, ilen, fcs); 
@@ -284,6 +277,13 @@ static inline void uih_frame(int level, struct frame *frm, long_frame_head *head
 			case SDP_UUID_DIALUP_NETWORKING:
 				if (!p_filter(FILT_PPP))
 					ppp_dump(level + 1, frm);
+				else
+					raw_dump(level, frm);
+				break;
+
+			case SDP_UUID_SIM_ACCESS:
+				if (!p_filter(FILT_SAP))
+					sap_dump(level + 1, frm);
 				else
 					raw_dump(level, frm);
 				break;

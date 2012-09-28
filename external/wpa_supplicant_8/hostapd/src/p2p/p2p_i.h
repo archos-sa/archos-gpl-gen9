@@ -89,6 +89,7 @@ struct p2p_device {
 #define P2P_DEV_FORCE_FREQ BIT(13)
 #define P2P_DEV_PD_FOR_JOIN BIT(14)
 #define P2P_DEV_REPORTED_ONCE BIT(15)
+#define P2P_DEV_WFD_SUPPORT	BIT(16)
 	unsigned int flags;
 
 	int status; /* enum p2p_status_code */
@@ -409,6 +410,14 @@ struct p2p_data {
 	 * in IDLE state.
 	 */
 	int pd_retries;
+
+#ifdef CONFIG_WFD
+	/*
+	 * Wi-Fi display module data
+	 */
+
+	struct wfd_data *wfd;
+#endif /* CONFIG_WFD */
 };
 
 /**
@@ -656,5 +665,9 @@ void p2p_build_ssid(struct p2p_data *p2p, u8 *ssid, size_t *ssid_len);
 int p2p_send_action(struct p2p_data *p2p, unsigned int freq, const u8 *dst,
 		    const u8 *src, const u8 *bssid, const u8 *buf,
 		    size_t len, unsigned int wait_time);
+#ifdef CONFIG_WFD
+struct wfd_data;
+void p2p_register_wfd(struct p2p_data *p2p, struct wfd_data *wfd);
+#endif /* CONFIG_WFD */
 
 #endif /* P2P_I_H */

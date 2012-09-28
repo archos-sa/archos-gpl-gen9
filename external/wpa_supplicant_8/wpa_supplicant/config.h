@@ -28,6 +28,12 @@
 #define DEFAULT_BSS_EXPIRATION_AGE 180
 #define DEFAULT_BSS_EXPIRATION_SCAN_COUNT 2
 #define DEFAULT_MAX_NUM_STA 128
+#define MAX_SCHED_SCAN_INTERVAL 3600
+#define MAX_NUM_SCHED_SCAN_SHORT_INTERVALS 14
+#define DEFAULT_SCHED_SCAN_SHORT_INTERVAL 10
+#define DEFAULT_SCHED_SCAN_LONG_INTERVAL 30
+#define DEFAULT_SCHED_SCAN_NUM_SHORT_INTERVALS 6
+#define DEFAULT_WFD_SESSION_MNGT_PORT	554
 
 #include "config_ssid.h"
 #include "wps/wps.h"
@@ -376,7 +382,10 @@ struct wpa_config {
 	 * stations in the group. As a P2P client, this means no GO seen in
 	 * scan results. The maximum idle time is specified in seconds with 0
 	 * indicating no time limit, i.e., the P2P group remains in active
-	 * state indefinitely until explicitly removed.
+	 * state indefinitely until explicitly removed. As a P2P client, the
+	 * maximum idle time of P2P_MAX_CLIENT_IDLE seconds is enforced, i.e.,
+	 * this parameter is mainly meant for GO use and for P2P client, it can
+	 * only be used to reduce the default timeout to smaller value.
 	 */
 	unsigned int p2p_group_idle;
 
@@ -426,6 +435,42 @@ struct wpa_config {
 	 * disassoc_low_ack - Disassocicate stations with massive packet loss
 	 */
 	int disassoc_low_ack;
+
+	/**
+	 * sched_scan_short_interval - Initial interval for sched scan in secs
+	 *
+	 * sched scan will start with this interval for num_short_intervals
+	 * intervals and then switch to a longer interval defined by
+	 * sched_scan_long_interval;
+	 */
+	int sched_scan_short_interval;
+
+	/**
+	 * long_sched_scan_interval - see sched_scan_short_interval
+	 */
+	int sched_scan_long_interval;
+
+	/**
+	 * sched_scan_num_short_intervals - see sched_scan_short_interval
+	 */
+	int sched_scan_num_short_intervals;
+
+	/**
+	 *  Wi-Fi display configuration parameters
+	 */
+#ifdef CONFIG_WFD
+	int wfd_enabled;
+	int wfd_type;
+	int wfd_coupled_sink_by_source;
+	int wfd_coupled_sink_by_sink;
+	int wfd_session_available;
+	int wfd_service_discovery;
+	int wfd_preferred_connectivity;
+	int wfd_content_protection;
+	int wfd_time_sync;
+	int wfd_session_mgmt_port;
+	int wfd_dev_max_tp;
+#endif /* CONFIG_WFD */
 };
 
 

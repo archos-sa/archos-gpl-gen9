@@ -26,6 +26,7 @@
 #include "radius/radius.h"
 #include "radius/radius_client.h"
 #include "p2p/p2p.h"
+#include "wfd/wfd_i.h"
 #include "wps/wps.h"
 #include "hostapd.h"
 #include "beacon.h"
@@ -1011,7 +1012,18 @@ static void send_assoc_resp(struct hostapd_data *hapd, struct sta_info *sta,
 	if (hapd->conf->p2p & P2P_MANAGE)
 		p = hostapd_eid_p2p_manage(hapd, p);
 #endif /* CONFIG_P2P_MANAGER */
-
+#ifdef CONFIG_WFD
+	if (hapd->wfd) {
+		struct wpabuf *wfd_resp_ie;
+		wfd_resp_ie = wfd_build_assoc_resp_ie(hapd->wfd);
+		if (wfd_resp_ie) {
+			os_memcpy(p, wpabuf_head(wfd_resp_ie),
+				  wpabuf_len(wfd_resp_ie));
+			p += wpabuf_len(wfd_resp_ie);
+			wpabuf_free(wfd_resp_ie);
+		}
+	}
+#endif /* CONFIG_WFD */
 	send_len += p - reply->u.assoc_resp.variable;
 
 	if (hostapd_drv_send_mlme(hapd, reply, send_len) < 0)
@@ -1077,6 +1089,14 @@ static void handle_assoc(struct hostapd_data *hapd,
 			       sta ? sta->flags : 0);
 		send_deauth(hapd, mgmt->sa,
 			    WLAN_REASON_CLASS2_FRAME_FROM_NONAUTH_STA);
+		return;
+	}
+
+	if ((sta->flags & WLAN_STA_ASSOC_REQ_OK) &&
+	    !(sta->flags & WLAN_STA_ASSOC)) {
+		hostapd_logger(hapd, mgmt->sa, HOSTAPD_MODULE_IEEE80211,
+			       HOSTAPD_LEVEL_INFO, "Station sent another "
+			       "assoc req before assoc resp. Discarding");
 		return;
 	}
 
@@ -1698,19 +1718,17 @@ static void handle_assoc_cb(struct hostapd_data *hapd,
 	struct sta_info *sta;
 	int new_assoc = 1;
 
-	if (!ok) {
-		hostapd_logger(hapd, mgmt->da, HOSTAPD_MODULE_IEEE80211,
-			       HOSTAPD_LEVEL_DEBUG,
-			       "did not acknowledge association response");
-		hostapd_drv_sta_remove(hapd, mgmt->da);
-		return;
-	}
-
 	if (len < IEEE80211_HDRLEN + (reassoc ? sizeof(mgmt->u.reassoc_resp) :
 				      sizeof(mgmt->u.assoc_resp))) {
 		printf("handle_assoc_cb(reassoc=%d) - too short payload "
 		       "(len=%lu)\n", reassoc, (unsigned long) len);
-		hostapd_drv_sta_remove(hapd, mgmt->da);
+		return;
+	}
+
+	sta = ap_get_sta(hapd, mgmt->da);
+	if (!sta) {
+		printf("handle_assoc_cb: STA " MACSTR " not found\n",
+		       MAC2STR(mgmt->da));
 		return;
 	}
 
@@ -1719,18 +1737,18 @@ static void handle_assoc_cb(struct hostapd_data *hapd,
 	else
 		status = le_to_host16(mgmt->u.assoc_resp.status_code);
 
-	sta = ap_get_sta(hapd, mgmt->da);
-	if (!sta) {
-		printf("handle_assoc_cb: STA " MACSTR " not found\n",
-		       MAC2STR(mgmt->da));
-		hostapd_drv_sta_remove(hapd, mgmt->da);
+	if (!ok) {
+		hostapd_logger(hapd, mgmt->da, HOSTAPD_MODULE_IEEE80211,
+			       HOSTAPD_LEVEL_DEBUG,
+			       "did not acknowledge association response");
+		if (status == WLAN_STATUS_SUCCESS)
+			hostapd_drv_sta_remove(hapd, sta->addr);
+		sta->flags &= ~WLAN_STA_ASSOC_REQ_OK;
 		return;
 	}
 
-	if (status != WLAN_STATUS_SUCCESS) {
-		hostapd_drv_sta_remove(hapd, sta->addr);
+	if (status != WLAN_STATUS_SUCCESS)
 		goto fail;
-	}
 
 	/* Stop previous accounting session, if one is started, and allocate
 	 * new session id for the new session. */

@@ -49,9 +49,10 @@
 #include "a2dp.h"
 #include "headset.h"
 #include "sink.h"
+#include "source.h"
 #include "gateway.h"
 #include "unix.h"
-#include "glib-helper.h"
+#include "glib-compat.h"
 
 #define check_nul(str) (str[sizeof(str) - 1] == '\0')
 
@@ -97,8 +98,10 @@ static GSList *clients = NULL;
 
 static int unix_sock = -1;
 
-static void client_free(struct unix_client *client)
+static void client_free(void *data)
 {
+	struct unix_client *client = data;
+
 	DBG("client_free(%p)", client);
 
 	if (client->cancel && client->dev && client->req_id > 0)
@@ -107,10 +110,7 @@ static void client_free(struct unix_client *client)
 	if (client->sock >= 0)
 		close(client->sock);
 
-	if (client->caps) {
-		g_slist_foreach(client->caps, (GFunc) g_free, NULL);
-		g_slist_free(client->caps);
-	}
+	g_slist_free_full(client->caps, g_free);
 
 	g_free(client->interface);
 	g_free(client);
@@ -768,11 +768,15 @@ failed:
 
 	unix_ipc_error(client, BT_SET_CONFIGURATION, EIO);
 
+	if (a2dp->sep) {
+		a2dp_sep_unlock(a2dp->sep, a2dp->session);
+		a2dp->sep = NULL;
+	}
+
 	avdtp_unref(a2dp->session);
 
 	a2dp->session = NULL;
 	a2dp->stream = NULL;
-	a2dp->sep = NULL;
 }
 
 static void a2dp_resume_complete(struct avdtp *session,
@@ -1028,7 +1032,7 @@ static void start_config(struct audio_device *dev, struct unix_client *client)
 		}
 
 		id = a2dp_config(a2dp->session, a2dp->sep, a2dp_config_complete,
-					client->caps, client);
+					client->caps, client, 0);
 		client->cancel = a2dp_cancel;
 		break;
 
@@ -1045,11 +1049,8 @@ static void start_config(struct audio_device *dev, struct unix_client *client)
 		client->cancel = headset_cancel_stream;
 		break;
 	case TYPE_GATEWAY:
-		if (gateway_config_stream(dev, gateway_setup_complete, client) >= 0) {
-			client->cancel = gateway_cancel_stream;
-			id = 1;
-		} else
-			id = 0;
+		id = gateway_config_stream(dev, gateway_setup_complete, client);
+		client->cancel = gateway_cancel_stream;
 		break;
 
 	default:
@@ -1118,10 +1119,8 @@ static void start_resume(struct audio_device *dev, struct unix_client *client)
 		break;
 
 	case TYPE_GATEWAY:
-		if (gateway_request_stream(dev, gateway_resume_complete, client))
-			id = 1;
-		else
-			id = 0;
+		id = gateway_request_stream(dev, gateway_resume_complete,
+						client);
 		client->cancel = gateway_cancel_stream;
 		break;
 
@@ -1493,11 +1492,8 @@ static int handle_a2dp_transport(struct unix_client *client,
 			!g_str_equal(client->interface, AUDIO_SOURCE_INTERFACE))
 		return -EIO;
 
-	if (client->caps) {
-		g_slist_foreach(client->caps, (GFunc) g_free, NULL);
-		g_slist_free(client->caps);
-		client->caps = NULL;
-	}
+	g_slist_free_full(client->caps, g_free);
+	client->caps = NULL;
 
 	media_transport = avdtp_service_cap_new(AVDTP_MEDIA_TRANSPORT,
 						NULL, 0);
@@ -1872,25 +1868,28 @@ int unix_init(void)
 
 	sk = socket(PF_LOCAL, SOCK_STREAM, 0);
 	if (sk < 0) {
-		err = errno;
-		error("Can't create unix socket: %s (%d)", strerror(err), err);
-		return -err;
+		err = -errno;
+		error("Can't create unix socket: %s (%d)", strerror(-err),
+									-err);
+		return err;
 	}
 
 	if (bind(sk, (struct sockaddr *) &addr, sizeof(addr)) < 0) {
-		error("Can't bind unix socket: %s (%d)", strerror(errno),
-				errno);
+		err = -errno;
+		error("Can't bind unix socket: %s (%d)", strerror(-err),
+									-err);
 		close(sk);
-		return -1;
+		return err;
 	}
 
 	set_nonblocking(sk);
 
 	if (listen(sk, 1) < 0) {
-		error("Can't listen on unix socket: %s (%d)",
-						strerror(errno), errno);
+		err = -errno;
+		error("Can't listen on unix socket: %s (%d)", strerror(-err),
+									-err);
 		close(sk);
-		return -1;
+		return err;
 	}
 
 	unix_sock = sk;
@@ -1907,8 +1906,7 @@ int unix_init(void)
 
 void unix_exit(void)
 {
-	g_slist_foreach(clients, (GFunc) client_free, NULL);
-	g_slist_free(clients);
+	g_slist_free_full(clients, client_free);
 	if (unix_sock >= 0) {
 		close(unix_sock);
 		unix_sock = -1;

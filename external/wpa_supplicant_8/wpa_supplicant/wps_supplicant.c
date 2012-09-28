@@ -1114,6 +1114,8 @@ int wpas_wps_init(struct wpa_supplicant *wpa_s)
 {
 	struct wps_context *wps;
 	struct wps_registrar_config rcfg;
+	struct hostapd_hw_modes *modes;
+	u16 m;
 
 	wps = os_zalloc(sizeof(*wps));
 	if (wps == NULL)
@@ -1146,7 +1148,23 @@ int wpas_wps_init(struct wpa_supplicant *wpa_s)
 		  WPS_DEV_TYPE_LEN * wps->dev.num_sec_dev_types);
 
 	wps->dev.os_version = WPA_GET_BE32(wpa_s->conf->os_version);
-	wps->dev.rf_bands = WPS_RF_24GHZ | WPS_RF_50GHZ; /* TODO: config */
+	modes = wpa_s->hw.modes;
+	if (modes) {
+		for (m = 0; m < wpa_s->hw.num_modes; m++) {
+			if (modes[m].mode == HOSTAPD_MODE_IEEE80211B ||
+			    modes[m].mode == HOSTAPD_MODE_IEEE80211G)
+				wps->dev.rf_bands |= WPS_RF_24GHZ;
+			else if (modes[m].mode == HOSTAPD_MODE_IEEE80211A)
+				wps->dev.rf_bands |= WPS_RF_50GHZ;
+		}
+	}
+	if (wps->dev.rf_bands == 0) {
+		/*
+		 * Default to claiming support for both bands if the driver
+		 * does not provide support for fetching supported bands.
+		 */
+		wps->dev.rf_bands = WPS_RF_24GHZ | WPS_RF_50GHZ;
+	}
 	os_memcpy(wps->dev.mac_addr, wpa_s->own_addr, ETH_ALEN);
 	wpas_wps_set_uuid(wpa_s, wps);
 
@@ -1330,6 +1348,14 @@ int wpas_wps_scan_pbc_overlap(struct wpa_supplicant *wpa_s,
 
 	if (!eap_is_wps_pbc_enrollee(&ssid->eap))
 		return 0;
+
+#ifdef CONFIG_P2P
+	if (wpa_s->p2p_in_provisioning) {
+		wpa_printf(MSG_DEBUG,
+			   "WPS: Don't check for PBC overlap in P2P");
+		return 0;
+	}
+#endif
 
 	wpa_printf(MSG_DEBUG, "WPS: Check whether PBC session overlap is "
 		   "present in scan results; selected BSSID " MACSTR,

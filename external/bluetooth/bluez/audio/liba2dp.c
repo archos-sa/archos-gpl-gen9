@@ -34,13 +34,17 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <pthread.h>
-
+#ifdef BLUETI_ENHANCEMENT
+#include <glib.h> /* Added for refreshing bitpool from audio.conf */
+#endif /*BLUETI_ENHANCEMENT*/
 #include <netinet/in.h>
 #include <sys/poll.h>
 #include <sys/prctl.h>
 
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/l2cap.h>
+#include <bluetooth/hci.h>
+#include <bluetooth/hci_lib.h>
 
 #include "ipc.h"
 #include "sbc.h"
@@ -149,7 +153,78 @@ struct bluetooth_data {
 
 	/* used for pacing our writes to the output socket */
 	uint64_t	next_write;
+
+	/* int set_flow_spec; */
 };
+
+
+static int set_flow_spec_sbc(struct bluetooth_data *data)
+{
+	int dev_id;
+	struct sockaddr_l2 la;
+	char addr[18];
+	uint8_t service_type;
+	uint32_t token_rate;
+	uint32_t peak_bandwidth;
+	uint32_t latency;
+	uint32_t delay_variation;
+	socklen_t len;
+	struct l2cap_conninfo l2_info;
+
+	len = sizeof(la);
+	if (getsockname(data->stream.fd, (struct sockaddr *) &la, &len) < 0)
+	{
+		return errno;
+	}
+
+	ba2str(&la.l2_bdaddr, addr);
+	dev_id = hci_devid(addr);
+	if (dev_id < 0)
+		dev_id = hci_get_route(NULL);
+
+	len = sizeof(l2_info);
+	if (getsockopt(data->stream.fd, SOL_L2CAP, L2CAP_CONNINFO, &l2_info, &len) < 0)
+	{
+		return errno;
+	}
+	service_type = HCI_FS_SERVICETYPE_GUARANTEED;
+
+	switch(data->sbc.frequency)
+	{
+	case SBC_FREQ_16000:
+		token_rate = 16000;
+		break;
+	case SBC_FREQ_32000:
+		token_rate = 32000;
+		break;
+	case SBC_FREQ_44100:
+		token_rate = 44100;
+		break;
+	case SBC_FREQ_48000:
+	default:
+		token_rate = 48000;
+	}
+/*
+	DBG("------- sbc_get_frame_length: %d, token_rate: %d, subbands: %d, blocks: %d",
+			sbc_get_frame_length(&data->sbc),token_rate, data->sbc.subbands,data->sbc.blocks);
+*/
+/*	token_rate = (sbc_get_frame_length(&data->sbc) << 3) * token_rate / data->sbc.subbands / data->sbc.blocks;
+	peak_bandwidth = token_rate;
+	latency = 200000; /* 200 mili, is it a good value? */
+/*	delay_variation = -1;
+
+
+	DBG("------- dev: %d, handle: %d, dir: %d, service_type: %d, rate: %d, peak %d, latency: %d, delay: %d",
+			dev_id, l2_info.hci_handle, HCI_FS_DIR_OUTGOING,  service_type, token_rate, peak_bandwidth,latency, delay_variation);
+
+
+	return hci_setflowspec(dev_id, l2_info.hci_handle, HCI_FS_DIR_OUTGOING, service_type,
+			token_rate, peak_bandwidth, latency, delay_variation);
+*/
+	/*  ~sbc 48 bitpool, bucket_size = L2CAP default MTU size, 25ms max access latency */
+	return hci_setflowspec(dev_id, l2_info.hci_handle, HCI_FS_DIR_OUTGOING, HCI_FS_SERVICETYPE_GUARANTEED,
+			40000, 672, 60000, 10000);
+}
 
 static uint64_t get_microseconds()
 {
@@ -267,6 +342,9 @@ static int bluetooth_start(struct bluetooth_data *data)
 	data->frame_count = 0;
 	data->next_write = 0;
 
+	if (set_flow_spec_sbc(data))
+		DBG("Setting flow specs failed!!!");
+
 	set_state(data, A2DP_STATE_STARTED);
 	return 0;
 
@@ -316,7 +394,108 @@ error:
 		set_state(data, A2DP_STATE_CONFIGURED);
 	return err;
 }
+#ifdef BLUETI_ENHANCEMENT
+/***** Changes for refreshing bitpool from audio.conf ********/
+static GKeyFile *a2dp_load_config_file(const char *file)
+{
+	GError *err = NULL;
+	GKeyFile *keyfile;
 
+	keyfile = g_key_file_new();
+	g_key_file_set_list_separator(keyfile, ',');
+
+	if (!g_key_file_load_from_file(keyfile, file, 0, &err)) {
+		ERR("Parsing %s failed: %s", file, err->message);
+		g_error_free(err);
+		g_key_file_free(keyfile);
+		return NULL;
+	}
+
+	return keyfile;
+}
+
+static uint8_t default_bitpool(uint8_t freq, uint8_t mode)
+{
+        uint8_t bitpoolVal = 0;
+        int bitpoolConfigVal = 0;
+        GError *err = NULL;
+        GKeyFile *config = NULL;
+
+        config = a2dp_load_config_file(CONFIGDIR "/audio.conf");
+
+        if(config) {
+	        DBG("liba2dp: default_bitpool: have config audio file");
+            bitpoolConfigVal = g_key_file_get_integer(config, "General", "bitpool", &err);
+            if(err) {
+                ERR("audio.conf: %s", err->message);
+                g_clear_error(&err);
+            } else {
+                if((bitpoolConfigVal > 0) && (bitpoolConfigVal < 200)) {
+                    bitpoolVal = bitpoolConfigVal & 0x00ff;
+                    DBG("liba2dp: default_bitpool: have valid bitpool value = %d", bitpoolVal);
+                } else
+                    ERR("liba2dp: have unvalid bitpool value = %d", bitpoolConfigVal);
+            }
+
+			g_key_file_free(config);
+		    config = NULL;
+        }
+        else
+            ERR("no config file");
+
+	switch (freq) {
+	case BT_SBC_SAMPLING_FREQ_16000:
+	case BT_SBC_SAMPLING_FREQ_32000:
+        if(bitpoolVal > 0)
+            return bitpoolVal;
+        else
+		    return 53;
+	case BT_SBC_SAMPLING_FREQ_44100:
+		switch (mode) {
+		case BT_A2DP_CHANNEL_MODE_MONO:
+		case BT_A2DP_CHANNEL_MODE_DUAL_CHANNEL:
+			return 31;
+		case BT_A2DP_CHANNEL_MODE_STEREO:
+		case BT_A2DP_CHANNEL_MODE_JOINT_STEREO:
+			if(bitpoolVal > 0)
+                return bitpoolVal;
+            else
+		        return 53;
+		default:
+			ERR("Invalid channel mode %u", mode);
+			if(bitpoolVal > 0)
+                return bitpoolVal;
+            else
+		        return 53;
+		}
+	case BT_SBC_SAMPLING_FREQ_48000:
+		switch (mode) {
+		case BT_A2DP_CHANNEL_MODE_MONO:
+		case BT_A2DP_CHANNEL_MODE_DUAL_CHANNEL:
+			return 29;
+		case BT_A2DP_CHANNEL_MODE_STEREO:
+		case BT_A2DP_CHANNEL_MODE_JOINT_STEREO:
+			if(bitpoolVal > 0)
+                return bitpoolVal;
+            else
+		        return 51;
+		default:
+			ERR("Invalid channel mode %u", mode);
+			if(bitpoolVal > 0)
+                return bitpoolVal;
+            else
+		        return 51;
+		}
+	default:
+		ERR("Invalid sampling freq %u", freq);
+		if(bitpoolVal > 0)
+            return bitpoolVal;
+        else
+		    return 53;
+	}
+}
+/**** End of changes for refreshing bitpool from audio.conf ****/
+#else /* BLUETI_ENHANCEMENT */
 static uint8_t default_bitpool(uint8_t freq, uint8_t mode)
 {
 	switch (freq) {
@@ -352,6 +531,7 @@ static uint8_t default_bitpool(uint8_t freq, uint8_t mode)
 		return 53;
 	}
 }
+#endif /* BLUETI_ENHANCEMENT */
 
 static int bluetooth_a2dp_init(struct bluetooth_data *data)
 {
@@ -494,6 +674,15 @@ static void bluetooth_a2dp_setup(struct bluetooth_data *data)
 	data->codesize = sbc_get_codesize(&data->sbc);
 	data->frame_duration = sbc_get_frame_duration(&data->sbc);
 	DBG("frame_duration: %d us", data->frame_duration);
+
+	// ilia, flow control, begin
+/*
+    if (set_flow_spec_sbc(data))
+    	DBG("Setting flow specs failed!!!");
+    else
+    	DBG("Setting flow specs success!!!");
+*/
+	// ilia, set role and flow control, end
 }
 
 static int bluetooth_a2dp_hw_params(struct bluetooth_data *data)

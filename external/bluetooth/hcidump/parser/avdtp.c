@@ -31,10 +31,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <sys/types.h>
-#include <netinet/in.h>
-
-#include "parser.h"
+#include "parser/parser.h"
 
 static char *si2str(uint8_t si)
 {
@@ -459,8 +456,9 @@ void avdtp_dump(int level, struct frame *frm)
 		nsp = (hdr & 0x0c) == 0x04 ? get_u8(frm) : 0;
 		sid = hdr & 0x08 ? 0x00 : get_u8(frm);
 
-		printf("AVDTP(s): %s %s: transaction %d\n",
-			hdr & 0x08 ? pt2str(hdr) : si2str(sid), mt2str(hdr), hdr >> 4);
+		printf("AVDTP(s): %s %s: transaction %d nsp 0x%02x\n",
+			hdr & 0x08 ? pt2str(hdr) : si2str(sid),
+			mt2str(hdr), hdr >> 4, nsp);
 
 		switch (sid & 0x7f) {
 		case 0x01:

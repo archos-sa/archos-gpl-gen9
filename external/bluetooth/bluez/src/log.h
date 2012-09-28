@@ -20,8 +20,11 @@
  *  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  *
  */
+#ifndef __LOG_H
+#define __LOG_H
 
 void info(const char *format, ...) __attribute__((format(printf, 1, 2)));
+void warn(const char *format, ...) __attribute__((format(printf, 1, 2)));
 void error(const char *format, ...) __attribute__((format(printf, 1, 2)));
 
 void btd_debug(const char *format, ...) __attribute__((format(printf, 1, 2)));
@@ -37,6 +40,16 @@ struct btd_debug_desc {
 	unsigned int flags;
 } __attribute__((aligned(8)));
 
+void __btd_enable_debug(struct btd_debug_desc *start,
+					struct btd_debug_desc *stop);
+
+#ifdef ANDROID
+#define LOG_TAG "BtDebug"
+#include <utils/Log.h>
+#else
+#define LOGD bt_debug
+#endif
+
 /**
  * DBG:
  * @fmt: format string
@@ -50,7 +63,31 @@ struct btd_debug_desc {
 	__attribute__((used, section("__debug"), aligned(8))) = { \
 		.file = __FILE__, .flags = BTD_DEBUG_FLAG_DEFAULT, \
 	}; \
-	if (__btd_debug_desc.flags & BTD_DEBUG_FLAG_PRINT) \
-		btd_debug("%s:%s() " fmt,  __FILE__, __FUNCTION__ , ## arg); \
+	LOGD("%s:%s() " fmt,  __FILE__, __FUNCTION__ , ## arg); \
 } while (0)
 
+/**
+ * INFO:
+ * @fmt: format string
+ * @arg...: list of arguments
+ *
+ * Simple macro around info() which also include the function
+ * name it is called in.
+ */
+#define INFO(fmt, arg...) do { \
+	info("%s:%s() " fmt,  __FILE__, __FUNCTION__ , ## arg); \
+} while (0)
+
+/**
+ * ERROR:
+ * @fmt: format string
+ * @arg...: list of arguments
+ *
+ * Simple macro around error() which also include the function
+ * name it is called in.
+ */
+#define ERROR(fmt, arg...) do { \
+	error("%s:%s() " fmt,  __FILE__, __FUNCTION__ , ## arg); \
+} while (0)
+
+#endif

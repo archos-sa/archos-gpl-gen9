@@ -2462,6 +2462,14 @@ struct wpa_config * wpa_config_alloc_empty(const char *ctrl_interface,
 	config->bss_expiration_age = DEFAULT_BSS_EXPIRATION_AGE;
 	config->bss_expiration_scan_count = DEFAULT_BSS_EXPIRATION_SCAN_COUNT;
 	config->max_num_sta = DEFAULT_MAX_NUM_STA;
+	config->sched_scan_short_interval = DEFAULT_SCHED_SCAN_SHORT_INTERVAL;
+	config->sched_scan_long_interval = DEFAULT_SCHED_SCAN_LONG_INTERVAL;
+	config->sched_scan_num_short_intervals =
+		DEFAULT_SCHED_SCAN_NUM_SHORT_INTERVALS;
+#ifdef CONFIG_WFD
+	config->wfd_session_available = 1;
+	config->wfd_session_mgmt_port = DEFAULT_WFD_SESSION_MNGT_PORT;
+#endif /* CONFIG_WFD */
 
 	if (ctrl_interface)
 		config->ctrl_interface = os_strdup(ctrl_interface);
@@ -2728,13 +2736,30 @@ static const struct global_parse_data global_fields[] = {
 	{ INT_RANGE(p2p_intra_bss, 0, 1), CFG_CHANGED_P2P_INTRA_BSS },
 	{ INT(p2p_group_idle), 0 },
 #endif /* CONFIG_P2P */
+#ifdef CONFIG_WFD
+	{ INT(wfd_enabled), 0 },
+	{ INT(wfd_type), 0 },
+	{ INT(wfd_coupled_sink_by_source), 0 },
+	{ INT(wfd_coupled_sink_by_sink), 0 },
+	{ INT(wfd_session_available), 0 },
+	{ INT(wfd_service_discovery), 0 },
+	{ INT(wfd_preferred_connectivity), 0 },
+	{ INT(wfd_content_protection), 0 },
+	{ INT(wfd_time_sync), 0 },
+	{ INT(wfd_session_mgmt_port), 0 },
+	{ INT(wfd_dev_max_tp), 0 },
+#endif /* CONFIG_WFD */
 	{ FUNC(country), CFG_CHANGED_COUNTRY },
 	{ INT(bss_max_count), 0 },
 	{ INT(bss_expiration_age), 0 },
 	{ INT(bss_expiration_scan_count), 0 },
 	{ INT_RANGE(filter_ssids, 0, 1), 0 },
 	{ INT(max_num_sta), 0 },
-	{ INT_RANGE(disassoc_low_ack, 0, 1), 0 }
+	{ INT_RANGE(disassoc_low_ack, 0, 1), 0 },
+	{ INT_RANGE(sched_scan_num_short_intervals, 0,
+		    MAX_NUM_SCHED_SCAN_SHORT_INTERVALS), 0 },
+	{ INT_RANGE(sched_scan_short_interval, 1, MAX_SCHED_SCAN_INTERVAL), 0 },
+	{ INT_RANGE(sched_scan_long_interval, 1, MAX_SCHED_SCAN_INTERVAL), 0 },
 };
 
 #undef FUNC

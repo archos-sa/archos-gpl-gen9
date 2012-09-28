@@ -7,10 +7,13 @@ LOCAL_C_INCLUDES:= \
 	$(call include-path-for,bluez)/lib/ \
 
 LOCAL_CFLAGS:= \
-	-DVERSION=\"2.0\"
+	-DHAVE_CONFIG_H \
 
 LOCAL_SRC_FILES:= \
+    lib/bluetooth.c \
 	parser/att.c \
+	parser/smp.c \
+	parser/avrcp.c \
 	parser/avctp.c \
 	parser/avdtp.c \
 	parser/bnep.c \
@@ -27,10 +30,12 @@ LOCAL_SRC_FILES:= \
 	parser/obex.c \
 	parser/parser.c \
 	parser/ppp.c \
+	parser/sap.c \
 	parser/rfcomm.c \
 	parser/sdp.c \
 	parser/tcpip.c \
 	src/hcidump.c
+
 
 LOCAL_SHARED_LIBRARIES := \
 	libbluetooth \

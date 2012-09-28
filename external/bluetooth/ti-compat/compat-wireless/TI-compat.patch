@@ -1,0 +1,691 @@
+diff -x Makefile -x Makefile.bk -ruN admin-upd-res/net/bluetooth/af_bluetooth.c net/bluetooth/af_bluetooth.c
+--- admin-upd-res/net/bluetooth/af_bluetooth.c	2012-07-02 15:40:02.983310000 +0300
++++ net/bluetooth/af_bluetooth.c	2012-07-02 15:40:04.728123000 +0300
+@@ -40,6 +40,13 @@
+ 
+ #include <net/bluetooth/bluetooth.h>
+ 
++#ifdef CONFIG_ANDROID_PARANOID_NETWORK
++#include <linux/android_aid.h>
++#endif
++#ifndef CONFIG_BT_SOCK_DEBUG
++#undef  BT_DBG
++#define BT_DBG(D...)
++#endif
+ #define VERSION "2.16"
+ 
+ /* Bluetooth sockets */
+@@ -122,6 +129,27 @@
+ }
+ EXPORT_SYMBOL(bt_sock_unregister);
+ 
++#ifdef CONFIG_ANDROID_PARANOID_NETWORK
++static inline int current_has_bt_admin(void)
++{
++	return (!current_euid() || in_egroup_p(AID_NET_BT_ADMIN));
++}
++
++static inline int current_has_bt(void)
++{
++	return (current_has_bt_admin() || in_egroup_p(AID_NET_BT));
++}
++# else
++static inline int current_has_bt_admin(void)
++{
++	return 1;
++}
++static inline int current_has_bt(void)
++{
++	return 1;
++}
++#endif
++
+ #if defined(CONFIG_COMPAT_BT_SOCK_CREATE_NEEDS_KERN)
+ static int bt_sock_create(struct net *net, struct socket *sock, int proto,
+ 			  int kern)
+@@ -130,6 +158,12 @@
+ #endif
+ {
+ 	int err;
++	if (proto == BTPROTO_RFCOMM || proto == BTPROTO_SCO ||
++			proto == BTPROTO_L2CAP) {
++		if (!current_has_bt())
++			return -EPERM;
++	} else if (!current_has_bt_admin())
++		return -EPERM;
+ 
+ 	if (net != &init_net)
+ 		return -EAFNOSUPPORT;
+diff -x Makefile -x Makefile.bk -ruN admin-upd-res/net/bluetooth/hci_conn.c net/bluetooth/hci_conn.c
+--- admin-upd-res/net/bluetooth/hci_conn.c	2012-07-02 15:40:02.984292000 +0300
++++ net/bluetooth/hci_conn.c	2012-07-02 15:40:04.730139000 +0300
+@@ -457,11 +457,13 @@
+ 								&conn->dst);
+ }
+ 
+-struct hci_conn *hci_conn_add(struct hci_dev *hdev, int type, bdaddr_t *dst)
++struct hci_conn *hci_conn_add(struct hci_dev *hdev, int type,
++					__u16 pkt_type, bdaddr_t *dst)
+ {
+ 	struct hci_conn *conn;
+ 
+-	BT_DBG("%s dst %s", hdev->name, batostr(dst));
++	BT_DBG("%s dst %s, type %d, pkt_type 0x%04x, hdev->esco_type 0x%04x",
++           hdev->name, batostr(dst), type, pkt_type, hdev->esco_type);
+ 
+ 	conn = kzalloc(sizeof(struct hci_conn), GFP_KERNEL);
+ 	if (!conn)
+@@ -486,14 +488,18 @@
+ 		conn->flowspec.service_type = HCI_FS_SERVICETYPE_BEST_EFFORT;
+ 		break;
+ 	case SCO_LINK:
+-		if (lmp_esco_capable(hdev))
+-			conn->pkt_type = (hdev->esco_type & SCO_ESCO_MASK) |
+-					(hdev->esco_type & EDR_ESCO_MASK);
+-		else
+-			conn->pkt_type = hdev->pkt_type & SCO_PTYPE_MASK;
+-		break;
++		if (!pkt_type)
++			pkt_type = SCO_ESCO_MASK;
+ 	case ESCO_LINK:
+-		conn->pkt_type = hdev->esco_type & ~EDR_ESCO_MASK;
++		if (!pkt_type)
++			pkt_type = ALL_ESCO_MASK;
++		if (lmp_esco_capable(hdev)) {
++			conn->pkt_type = (pkt_type ^ EDR_ESCO_MASK) &
++					hdev->esco_type;
++		} else {
++			conn->pkt_type = (pkt_type << 5) & hdev->pkt_type &
++					SCO_PTYPE_MASK;
++		}
+ 		break;
+ 	}
+ 
+@@ -611,7 +617,7 @@
+ 
+ /* Create SCO, ACL or LE connection.
+  * Device _must_ be locked */
+-struct hci_conn *hci_connect(struct hci_dev *hdev, int type, bdaddr_t *dst, __u8 addr_type, __u8 sec_level, __u8 auth_type)
++struct hci_conn *hci_connect(struct hci_dev *hdev, int type, __u16 pkt_type, bdaddr_t *dst, __u8 addr_type, __u8 sec_level, __u8 auth_type)
+ {
+ 	struct hci_conn *acl;
+ 	struct hci_conn *sco;
+@@ -631,7 +637,7 @@
+ 			else
+ 				dst_type = ADDR_LE_DEV_PUBLIC;
+ 
+-			le = hci_conn_add(hdev, LE_LINK, dst);
++			le = hci_conn_add(hdev, LE_LINK, 0, dst);
+ 			if (!le)
+ 				return ERR_PTR(-ENOMEM);
+ 
+@@ -652,7 +658,7 @@
+ 
+ 	acl = hci_conn_hash_lookup_ba(hdev, ACL_LINK, dst);
+ 	if (!acl) {
+-		acl = hci_conn_add(hdev, ACL_LINK, dst);
++		acl = hci_conn_add(hdev, ACL_LINK, 0, dst);
+ 		if (!acl)
+ 			return ERR_PTR(-ENOMEM);
+ 	}
+@@ -671,7 +677,7 @@
+ 
+ 	sco = hci_conn_hash_lookup_ba(hdev, type, dst);
+ 	if (!sco) {
+-		sco = hci_conn_add(hdev, type, dst);
++		sco = hci_conn_add(hdev, type, pkt_type, dst);
+ 		if (!sco) {
+ 			hci_conn_put(acl);
+ 			return ERR_PTR(-ENOMEM);
+@@ -975,6 +981,15 @@
+ 		(ci + n)->out   = c->out;
+ 		(ci + n)->state = c->state;
+ 		(ci + n)->link_mode = c->link_mode;
++		if (c->type == SCO_LINK) {
++			(ci + n)->mtu = hdev->sco_mtu;
++			(ci + n)->cnt = hdev->sco_cnt;
++			(ci + n)->pkts = hdev->sco_pkts;
++		} else {
++			(ci + n)->mtu = hdev->acl_mtu;
++			(ci + n)->cnt = hdev->acl_cnt;
++			(ci + n)->pkts = hdev->acl_pkts;
++		}
+ 		if (++n >= req.conn_num)
+ 			break;
+ 	}
+@@ -1011,6 +1026,15 @@
+ 		ci.out   = conn->out;
+ 		ci.state = conn->state;
+ 		ci.link_mode = conn->link_mode;
++		if (req.type == SCO_LINK) {
++			ci.mtu = hdev->sco_mtu;
++			ci.cnt = hdev->sco_cnt;
++			ci.pkts = hdev->sco_pkts;
++		} else {
++			ci.mtu = hdev->acl_mtu;
++			ci.cnt = hdev->acl_cnt;
++			ci.pkts = hdev->acl_pkts;
++		}
+ 	}
+ 	hci_dev_unlock(hdev);
+ 
+diff -x Makefile -x Makefile.bk -ruN admin-upd-res/net/bluetooth/hci_core.c net/bluetooth/hci_core.c
+--- admin-upd-res/net/bluetooth/hci_core.c	2012-07-02 15:40:02.986316000 +0300
++++ net/bluetooth/hci_core.c	2012-07-02 15:40:04.734132000 +0300
+@@ -2337,7 +2337,8 @@
+ 		spin_lock(&queue->lock);
+ 
+ 		__skb_queue_tail(queue, skb);
+-
++		
++		flags &= ~ACL_PB_MASK;
+ 		flags &= ~ACL_START;
+ 		flags |= ACL_CONT;
+ 		do {
+diff -x Makefile -x Makefile.bk -ruN admin-upd-res/net/bluetooth/hci_event.c net/bluetooth/hci_event.c
+--- admin-upd-res/net/bluetooth/hci_event.c	2012-07-02 15:40:02.989291000 +0300
++++ net/bluetooth/hci_event.c	2012-07-02 15:40:04.738130000 +0300
+@@ -1262,7 +1262,7 @@
+ 		}
+ 	} else {
+ 		if (!conn) {
+-			conn = hci_conn_add(hdev, ACL_LINK, &cp->bdaddr);
++			conn = hci_conn_add(hdev, ACL_LINK, 0, &cp->bdaddr);
+ 			if (conn) {
+ 				conn->out = true;
+ 				conn->link_mode |= HCI_LM_MASTER;
+@@ -1692,7 +1692,7 @@
+ 		}
+ 	} else {
+ 		if (!conn) {
+-			conn = hci_conn_add(hdev, LE_LINK, &cp->peer_addr);
++			conn = hci_conn_add(hdev, LE_LINK, 0, &cp->peer_addr);
+ 			if (conn) {
+ 				conn->dst_type = cp->peer_addr_type;
+ 				conn->out = true;
+@@ -1886,7 +1886,7 @@
+ 
+ 		conn = hci_conn_hash_lookup_ba(hdev, ev->link_type, &ev->bdaddr);
+ 		if (!conn) {
+-			conn = hci_conn_add(hdev, ev->link_type, &ev->bdaddr);
++			conn = hci_conn_add(hdev, ev->link_type, 0, &ev->bdaddr);
+ 			if (!conn) {
+ 				BT_ERR("No memory for new connection");
+ 				hci_dev_unlock(hdev);
+@@ -3069,6 +3069,7 @@
+ 		hci_conn_add_sysfs(conn);
+ 		break;
+ 
++	case 0x10:	/* Connection Accept Timeout */
+ 	case 0x11:	/* Unsupported Feature or Parameter Value */
+ 	case 0x1c:	/* SCO interval rejected */
+ 	case 0x1a:	/* Unsupported Remote Feature */
+@@ -3471,7 +3472,7 @@
+ 
+ 	conn = hci_conn_hash_lookup_ba(hdev, LE_LINK, &ev->bdaddr);
+ 	if (!conn) {
+-		conn = hci_conn_add(hdev, LE_LINK, &ev->bdaddr);
++		conn = hci_conn_add(hdev, LE_LINK, 0, &ev->bdaddr);
+ 		if (!conn) {
+ 			BT_ERR("No memory for new connection");
+ 			hci_dev_unlock(hdev);
+diff -x Makefile -x Makefile.bk -ruN admin-upd-res/net/bluetooth/hci_sysfs.c net/bluetooth/hci_sysfs.c
+--- admin-upd-res/net/bluetooth/hci_sysfs.c	2012-07-02 15:40:02.990309000 +0300
++++ net/bluetooth/hci_sysfs.c	2012-07-02 15:40:04.740132000 +0300
+@@ -271,12 +271,10 @@
+ static ssize_t store_idle_timeout(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+ {
+ 	struct hci_dev *hdev = to_hci_dev(dev);
+-	unsigned int val;
+-	int rv;
+-
+-	rv = kstrtouint(buf, 0, &val);
+-	if (rv < 0)
+-		return rv;
++	unsigned long val;
++ 
++	if (strict_strtoul(buf, 0, &val) < 0)
++		return -EINVAL;
+ 
+ 	if (val != 0 && (val < 500 || val > 3600000))
+ 		return -EINVAL;
+@@ -295,12 +293,13 @@
+ static ssize_t store_sniff_max_interval(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+ {
+ 	struct hci_dev *hdev = to_hci_dev(dev);
+-	u16 val;
+-	int rv;
++	unsigned long val;
++ 
++	if (strict_strtoul(buf, 0, &val) < 0)
++		return -EINVAL;
+ 
+-	rv = kstrtou16(buf, 0, &val);
+-	if (rv < 0)
+-		return rv;
++	if (val < 0x0002 || val > 0xFFFE || val % 2)
++		return -EINVAL;
+ 
+ 	if (val == 0 || val % 2 || val < hdev->sniff_min_interval)
+ 		return -EINVAL;
+@@ -319,12 +318,13 @@
+ static ssize_t store_sniff_min_interval(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+ {
+ 	struct hci_dev *hdev = to_hci_dev(dev);
+-	u16 val;
+-	int rv;
++	unsigned long val;
+ 
+-	rv = kstrtou16(buf, 0, &val);
+-	if (rv < 0)
+-		return rv;
++	if (strict_strtoul(buf, 0, &val) < 0)
++		return -EINVAL;
++ 
++	if (val < 0x0002 || val > 0xFFFE || val % 2)
++		return -EINVAL;
+ 
+ 	if (val == 0 || val % 2 || val > hdev->sniff_max_interval)
+ 		return -EINVAL;
+diff -x Makefile -x Makefile.bk -ruN admin-upd-res/net/bluetooth/l2cap_core.c net/bluetooth/l2cap_core.c
+--- admin-upd-res/net/bluetooth/l2cap_core.c	2012-07-02 15:40:02.992334000 +0300
++++ net/bluetooth/l2cap_core.c	2012-07-02 15:40:04.744135000 +0300
+@@ -1267,10 +1267,10 @@
+ 	auth_type = l2cap_get_auth_type(chan);
+ 
+ 	if (chan->dcid == L2CAP_CID_LE_DATA)
+-		hcon = hci_connect(hdev, LE_LINK, dst, chan->addr_type,
++		hcon = hci_connect(hdev, LE_LINK, 0, dst, chan->addr_type,
+ 					chan->sec_level, auth_type);
+ 	else
+-		hcon = hci_connect(hdev, ACL_LINK, dst, chan->addr_type,
++		hcon = hci_connect(hdev, ACL_LINK, 0, dst, chan->addr_type,
+ 					chan->sec_level, auth_type);
+ 
+ 	if (IS_ERR(hcon)) {
+diff -x Makefile -x Makefile.bk -ruN admin-upd-res/net/bluetooth/mgmt.c net/bluetooth/mgmt.c
+--- admin-upd-res/net/bluetooth/mgmt.c	2012-07-02 15:40:03.000291000 +0300
++++ net/bluetooth/mgmt.c	2012-07-02 15:41:32.156905000 +0300
+@@ -2301,10 +2301,10 @@
+ 		auth_type = HCI_AT_DEDICATED_BONDING_MITM;
+ 
+ 	if (cp->addr.type == MGMT_ADDR_BREDR)
+-		conn = hci_connect(hdev, ACL_LINK, &cp->addr.bdaddr, MGMT_ADDR_BREDR, sec_level,
++		conn = hci_connect(hdev, ACL_LINK, 0, &cp->addr.bdaddr, MGMT_ADDR_BREDR, sec_level,
+ 				   auth_type);
+ 	else
+-		conn = hci_connect(hdev, LE_LINK, &cp->addr.bdaddr, cp->addr.type, sec_level,
++		conn = hci_connect(hdev, LE_LINK, 0, &cp->addr.bdaddr, cp->addr.type, sec_level,
+ 				   auth_type);
+ 
+ 	memset(&rp, 0, sizeof(rp));
+diff -x Makefile -x Makefile.bk -ruN admin-upd-res/net/bluetooth/rfcomm/core.c net/bluetooth/rfcomm/core.c
+--- admin-upd-res/net/bluetooth/rfcomm/core.c	2012-07-02 15:40:03.033312000 +0300
++++ net/bluetooth/rfcomm/core.c	2012-07-02 15:40:04.751135000 +0300
+@@ -243,31 +243,6 @@
+ 	return hci_conn_security(conn->hcon, d->sec_level, auth_type);
+ }
+ 
+-static void rfcomm_session_timeout(unsigned long arg)
+-{
+-	struct rfcomm_session *s = (void *) arg;
+-
+-	BT_DBG("session %p state %ld", s, s->state);
+-
+-	set_bit(RFCOMM_TIMED_OUT, &s->flags);
+-	rfcomm_schedule();
+-}
+-
+-static void rfcomm_session_set_timer(struct rfcomm_session *s, long timeout)
+-{
+-	BT_DBG("session %p state %ld timeout %ld", s, s->state, timeout);
+-
+-	mod_timer(&s->timer, jiffies + timeout);
+-}
+-
+-static void rfcomm_session_clear_timer(struct rfcomm_session *s)
+-{
+-	BT_DBG("session %p state %ld", s, s->state);
+-
+-	if (timer_pending(&s->timer))
+-		del_timer(&s->timer);
+-}
+-
+ /* ---- RFCOMM DLCs ---- */
+ static void rfcomm_dlc_timeout(unsigned long arg)
+ {
+@@ -343,7 +318,6 @@
+ {
+ 	BT_DBG("dlc %p session %p", d, s);
+ 
+-	rfcomm_session_clear_timer(s);
+ 	rfcomm_dlc_hold(d);
+ 	list_add(&d->list, &s->dlcs);
+ 	d->session = s;
+@@ -359,8 +333,6 @@
+ 	d->session = NULL;
+ 	rfcomm_dlc_put(d);
+ 
+-	if (list_empty(&s->dlcs))
+-		rfcomm_session_set_timer(s, RFCOMM_IDLE_TIMEOUT);
+ }
+ 
+ static struct rfcomm_dlc *rfcomm_dlc_get(struct rfcomm_session *s, u8 dlci)
+@@ -451,7 +423,6 @@
+ 
+ 	switch (d->state) {
+ 	case BT_CONNECT:
+-	case BT_CONFIG:
+ 		if (test_and_clear_bit(RFCOMM_DEFER_SETUP, &d->flags)) {
+ 			set_bit(RFCOMM_AUTH_REJECT, &d->flags);
+ 			rfcomm_schedule();
+@@ -471,7 +442,6 @@
+ 		break;
+ 
+ 	case BT_OPEN:
+-	case BT_CONNECT2:
+ 		if (test_and_clear_bit(RFCOMM_DEFER_SETUP, &d->flags)) {
+ 			set_bit(RFCOMM_AUTH_REJECT, &d->flags);
+ 			rfcomm_schedule();
+@@ -590,8 +560,6 @@
+ 
+ 	BT_DBG("session %p sock %p", s, sock);
+ 
+-	setup_timer(&s->timer, rfcomm_session_timeout, (unsigned long) s);
+-
+ 	INIT_LIST_HEAD(&s->dlcs);
+ 	s->state = state;
+ 	s->sock  = sock;
+@@ -620,7 +588,6 @@
+ 
+ 	list_del(&s->list);
+ 
+-	rfcomm_session_clear_timer(s);
+ 	sock_release(s->sock);
+ 	kfree(s);
+ 
+@@ -1133,7 +1100,6 @@
+ 			if (list_empty(&s->dlcs)) {
+ 				s->state = BT_DISCONN;
+ 				rfcomm_send_disc(s, 0);
+-				rfcomm_session_clear_timer(s);
+ 			}
+ 
+ 			break;
+@@ -1229,8 +1195,6 @@
+ 
+ 	rfcomm_send_ua(d->session, d->dlci);
+ 
+-	rfcomm_dlc_clear_timer(d);
+-
+ 	rfcomm_dlc_lock(d);
+ 	d->state = BT_CONNECTED;
+ 	d->state_change(d, 0);
+@@ -1248,11 +1212,6 @@
+ 		if (d->defer_setup) {
+ 			set_bit(RFCOMM_DEFER_SETUP, &d->flags);
+ 			rfcomm_dlc_set_timer(d, RFCOMM_AUTH_TIMEOUT);
+-
+-			rfcomm_dlc_lock(d);
+-			d->state = BT_CONNECT2;
+-			d->state_change(d, 0);
+-			rfcomm_dlc_unlock(d);
+ 		} else
+ 			rfcomm_dlc_accept(d);
+ 	} else {
+@@ -1799,11 +1758,6 @@
+ 				if (d->defer_setup) {
+ 					set_bit(RFCOMM_DEFER_SETUP, &d->flags);
+ 					rfcomm_dlc_set_timer(d, RFCOMM_AUTH_TIMEOUT);
+-
+-					rfcomm_dlc_lock(d);
+-					d->state = BT_CONNECT2;
+-					d->state_change(d, 0);
+-					rfcomm_dlc_unlock(d);
+ 				} else
+ 					rfcomm_dlc_accept(d);
+ 			}
+@@ -1917,12 +1871,6 @@
+ 		struct rfcomm_session *s;
+ 		s = list_entry(p, struct rfcomm_session, list);
+ 
+-		if (test_and_clear_bit(RFCOMM_TIMED_OUT, &s->flags)) {
+-			s->state = BT_DISCONN;
+-			rfcomm_send_disc(s, 0);
+-			continue;
+-		}
+-
+ 		if (s->state == BT_LISTEN) {
+ 			rfcomm_accept_connection(s);
+ 			continue;
+diff -x Makefile -x Makefile.bk -ruN admin-upd-res/net/bluetooth/sco.c net/bluetooth/sco.c
+--- admin-upd-res/net/bluetooth/sco.c	2012-07-02 15:40:03.001298000 +0300
++++ net/bluetooth/sco.c	2012-07-02 15:40:04.753137000 +0300
+@@ -178,13 +178,14 @@
+ {
+ 	bdaddr_t *src = &bt_sk(sk)->src;
+ 	bdaddr_t *dst = &bt_sk(sk)->dst;
++	__u16 pkt_type = sco_pi(sk)->pkt_type;
+ 	__u8 coding_format = sco_pi(sk)->coding_format;
+ 	struct sco_conn *conn;
+ 	struct hci_conn *hcon;
+ 	struct hci_dev  *hdev;
+ 	int err, type;
+ 
+-	BT_DBG("%s -> %s", batostr(src), batostr(dst));
++	BT_DBG("%s -> %s, pkt_type 0x%04x, coding_format %d", batostr(src), batostr(dst), pkt_type, coding_format);
+ 
+ 	hdev = hci_get_route(dst, src);
+ 	
+@@ -195,12 +196,14 @@
+ 
+ 	if (lmp_esco_capable(hdev) && !disable_esco)
+ 		type = ESCO_LINK;
+-	else
+-		type = SCO_LINK;
++	else {
++ 		type = SCO_LINK;
++		pkt_type &= SCO_ESCO_MASK;
++	}
+ 
+ 	hdev->coding_format = coding_format;
+ 
+-	hcon = hci_connect(hdev, type, dst, BT_ADDR_BREDR, BT_SECURITY_LOW, HCI_AT_NO_BONDING);
++	hcon = hci_connect(hdev, type, pkt_type, dst, BT_ADDR_BREDR, BT_SECURITY_LOW, HCI_AT_NO_BONDING);
+ 	if (IS_ERR(hcon)) {
+ 		err = PTR_ERR(hcon);
+ 		goto done;
+@@ -471,17 +474,20 @@
+ 	return 0;
+ }
+ 
+-static int sco_sock_bind(struct socket *sock, struct sockaddr *addr, int addr_len)
++static int sco_sock_bind(struct socket *sock, struct sockaddr *addr, int alen)
+ {
+-	struct sockaddr_sco *sa = (struct sockaddr_sco *) addr;
++	struct sockaddr_sco sa;
+ 	struct sock *sk = sock->sk;
+-	bdaddr_t *src = &sa->sco_bdaddr;
+-	int err = 0;
++	bdaddr_t *src = &sa.sco_bdaddr;
++	int len, err = 0;
+ 
+-	BT_DBG("sk %p %s", sk, batostr(&sa->sco_bdaddr));
++	BT_DBG("sk %p %s", sk, batostr(&sa.sco_bdaddr));
+ 
+ 	if (!addr || addr->sa_family != AF_BLUETOOTH)
+ 		return -EINVAL;
++	memset(&sa, 0, sizeof(sa));
++	len = min_t(unsigned int, sizeof(sa), alen);
++	memcpy(&sa, addr, len);
+ 
+ 	lock_sock(sk);
+ 
+@@ -496,7 +502,8 @@
+ 		err = -EADDRINUSE;
+ 	} else {
+ 		/* Save source address */
+-		bacpy(&bt_sk(sk)->src, &sa->sco_bdaddr);
++		bacpy(&bt_sk(sk)->src, &sa.sco_bdaddr);
++		sco_pi(sk)->pkt_type = sa.sco_pkt_type;
+ 		sk->sk_state = BT_BOUND;
+ 	}
+ 
+@@ -509,30 +516,35 @@
+ 
+ static int sco_sock_connect(struct socket *sock, struct sockaddr *addr, int alen, int flags)
+ {
+-	struct sockaddr_sco *sa = (struct sockaddr_sco *) addr;
+ 	struct sock *sk = sock->sk;
+-	int err = 0;
++	struct sockaddr_sco sa;
++	int len, err = 0;
+ 
+ 
+ 	BT_DBG("sk %p", sk);
+ 
+-	if (alen < sizeof(struct sockaddr_sco) ||
+-	    addr->sa_family != AF_BLUETOOTH)
++	if (!addr || addr->sa_family != AF_BLUETOOTH)
+ 		return -EINVAL;
+ 
+-	if (sk->sk_state != BT_OPEN && sk->sk_state != BT_BOUND)
+-		return -EBADFD;
+-
+-	if (sk->sk_type != SOCK_SEQPACKET)
+-		return -EINVAL;
++	memset(&sa, 0, sizeof(sa));
++	len = min_t(unsigned int, sizeof(sa), alen);
++	memcpy(&sa, addr, len);
+ 
+ 	lock_sock(sk);
+ 
++	if (sk->sk_type != SOCK_SEQPACKET) {
++		err = -EINVAL;
++		goto done;
++	}
++	if (sk->sk_state != BT_OPEN && sk->sk_state != BT_BOUND) {
++		err = -EBADFD;
++		goto done;
++	}
+ 	/* Set destination address and psm */
+-	bacpy(&bt_sk(sk)->dst, &sa->sco_bdaddr);
++	bacpy(&bt_sk(sk)->dst, &sa.sco_bdaddr);
++	sco_pi(sk)->pkt_type = sa.sco_pkt_type;
+ 
+-	err = sco_connect(sk);
+-	if (err)
++	if ((err = sco_connect(sk)))
+ 		goto done;
+ 
+ 	err = bt_sock_wait_state(sk, BT_CONNECTED,
+@@ -636,6 +648,7 @@
+ 		bacpy(&sa->sco_bdaddr, &bt_sk(sk)->dst);
+ 	else
+ 		bacpy(&sa->sco_bdaddr, &bt_sk(sk)->src);
++	sa->sco_pkt_type = sco_pi(sk)->pkt_type;
+ 
+ 	return 0;
+ }
+diff -x compat_autoconf.h -ruN admin-upd-res/include/net/bluetooth/hci.h include/net/bluetooth/hci.h
+--- admin-upd-res/include/net/bluetooth/hci.h	2012-07-02 15:40:04.705136000 +0300
++++ include/net/bluetooth/hci.h	2012-07-02 15:40:04.756132000 +0300
+@@ -177,6 +177,8 @@
+ 
+ #define SCO_ESCO_MASK  (ESCO_HV1 | ESCO_HV2 | ESCO_HV3)
+ #define EDR_ESCO_MASK  (ESCO_2EV3 | ESCO_3EV3 | ESCO_2EV5 | ESCO_3EV5)
++#define ALL_ESCO_MASK	(SCO_ESCO_MASK | ESCO_EV3 | ESCO_EV4 | ESCO_EV5 | \
++			EDR_ESCO_MASK)
+ 
+ /* ACL flags */
+ #define ACL_START_NO_FLUSH	0x00
+@@ -185,6 +187,7 @@
+ #define ACL_ACTIVE_BCAST	0x04
+ #define ACL_PICO_BCAST		0x08
+ 
++#define ACL_PB_MASK	(ACL_CONT | ACL_START)
+ /* Baseband links */
+ #define SCO_LINK	0x00
+ #define ACL_LINK	0x01
+@@ -1537,6 +1540,9 @@
+ 	__u8     out;
+ 	__u16    state;
+ 	__u32    link_mode;
++	__u32    mtu;
++	__u32    cnt;
++	__u32    pkts;
+ };
+ 
+ struct hci_dev_req {
+diff -x compat_autoconf.h -ruN admin-upd-res/include/net/bluetooth/hci_core.h include/net/bluetooth/hci_core.h
+--- admin-upd-res/include/net/bluetooth/hci_core.h	2012-07-02 15:40:04.700125000 +0300
++++ include/net/bluetooth/hci_core.h	2012-07-02 15:40:04.758127000 +0300
+@@ -570,7 +570,8 @@
+ void hci_enhanced_setup_sync(struct hci_conn *conn, __u16 handle);
+ void hci_sco_setup(struct hci_conn *conn, __u8 status);
+ 
+-struct hci_conn *hci_conn_add(struct hci_dev *hdev, int type, bdaddr_t *dst);
++struct hci_conn *hci_conn_add(struct hci_dev *hdev, int type,
++					__u16 pkt_type, bdaddr_t *dst);
+ int hci_conn_del(struct hci_conn *conn);
+ void hci_conn_hash_flush(struct hci_dev *hdev);
+ void hci_conn_check_pending(struct hci_dev *hdev);
+@@ -579,7 +580,7 @@
+ int hci_chan_del(struct hci_chan *chan);
+ void hci_chan_list_flush(struct hci_conn *conn);
+ 
+-struct hci_conn *hci_connect(struct hci_dev *hdev, int type, bdaddr_t *dst,
++struct hci_conn *hci_connect(struct hci_dev *hdev, int type, __u16 pkt_type, bdaddr_t *dst,
+ 			     __u8 addr_type, __u8 sec_level, __u8 auth_type);
+ int hci_conn_check_link_mode(struct hci_conn *conn);
+ int hci_conn_check_secure(struct hci_conn *conn, __u8 sec_level);
+diff -x compat_autoconf.h -ruN admin-upd-res/include/net/bluetooth/l2cap.h include/net/bluetooth/l2cap.h
+--- admin-upd-res/include/net/bluetooth/l2cap.h	2012-07-02 15:40:04.701150000 +0300
++++ include/net/bluetooth/l2cap.h	2012-07-02 15:40:04.760127000 +0300
+@@ -84,6 +84,7 @@
+ #define L2CAP_LM_TRUSTED	0x0008
+ #define L2CAP_LM_RELIABLE	0x0010
+ #define L2CAP_LM_SECURE		0x0020
++#define L2CAP_LM_FLUSHABLE	0x0040
+ 
+ /* L2CAP command codes */
+ #define L2CAP_COMMAND_REJ	0x01
+diff -x compat_autoconf.h -ruN admin-upd-res/include/net/bluetooth/rfcomm.h include/net/bluetooth/rfcomm.h
+--- admin-upd-res/include/net/bluetooth/rfcomm.h	2012-07-02 15:40:04.703142000 +0300
++++ include/net/bluetooth/rfcomm.h	2012-07-02 15:40:04.762125000 +0300
+@@ -29,7 +29,6 @@
+ #define RFCOMM_CONN_TIMEOUT (HZ * 30)
+ #define RFCOMM_DISC_TIMEOUT (HZ * 20)
+ #define RFCOMM_AUTH_TIMEOUT (HZ * 25)
+-#define RFCOMM_IDLE_TIMEOUT (HZ * 2)
+ 
+ #define RFCOMM_DEFAULT_MTU	127
+ #define RFCOMM_DEFAULT_CREDITS	7
+@@ -155,7 +154,6 @@
+ struct rfcomm_session {
+ 	struct list_head list;
+ 	struct socket   *sock;
+-	struct timer_list timer;
+ 	unsigned long    state;
+ 	unsigned long    flags;
+ 	int              initiator;
+diff -x compat_autoconf.h -ruN admin-upd-res/include/net/bluetooth/sco.h include/net/bluetooth/sco.h
+--- admin-upd-res/include/net/bluetooth/sco.h	2012-07-02 15:40:04.708135000 +0300
++++ include/net/bluetooth/sco.h	2012-07-02 15:40:04.763137000 +0300
+@@ -48,6 +48,7 @@
+ struct sockaddr_sco {
+ 	sa_family_t	sco_family;
+ 	bdaddr_t	sco_bdaddr;
++	__u16		sco_pkt_type;
+ };
+ 
+ /* SCO socket options */
+@@ -89,6 +90,8 @@
+ struct sco_pinfo {
+ 	struct bt_sock	bt;
+ 	__u32		flags;
++	__u16		pkt_type;
++	
+ 	struct sco_conn	*conn;
+ 	__u8  coding_format;
+ };

@@ -68,6 +68,7 @@ protected:
   unsigned fPictureCount; // hack used to implement doGetNextFrame()
   Boolean fPictureEndMarker;
   struct timeval fPresentationTimeBase;
+  Boolean fPresentationTimeBaseSynchronized;
 
   // parsing state
   class MPEGVideoStreamParser* fParser;
@@ -79,6 +80,7 @@ private:
   double fPictureTimeBase;
   unsigned fTcSecsBase;
   Boolean fHaveSeenFirstTimeCode;
+  virtual void updatePresentationTime(struct timeval);
 };
 
 #endif

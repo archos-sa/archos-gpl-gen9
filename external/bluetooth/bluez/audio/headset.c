@@ -53,7 +53,8 @@
 #include "error.h"
 #include "telephony.h"
 #include "headset.h"
-#include "glib-helper.h"
+#include "glib-compat.h"
+#include "sdp-client.h"
 #include "btio.h"
 #include "dbus-common.h"
 #include "../src/adapter.h"
@@ -167,6 +168,7 @@ struct headset {
 
 	gboolean hfp_active;
 	gboolean search_hfp;
+	gboolean rfcomm_initiator;
 
 	headset_state_t state;
 	struct pending_connect *pending;
@@ -445,8 +447,7 @@ static void pending_connect_finalize(struct audio_device *dev)
 
 	g_slist_foreach(p->callbacks, (GFunc) pending_connect_complete, dev);
 
-	g_slist_foreach(p->callbacks, (GFunc) g_free, NULL);
-	g_slist_free(p->callbacks);
+	g_slist_free_full(p->callbacks, g_free);
 
 	if (p->io) {
 		g_io_channel_shutdown(p->io, TRUE, NULL);
@@ -1330,7 +1331,8 @@ static gboolean rfcomm_io_cb(GIOChannel *chan, GIOCondition cond,
 		if (err == -EINVAL) {
 			error("Badly formated or unrecognized command: %s",
 					&slc->buf[slc->data_start]);
-			err = headset_send(hs, "\r\nERROR\r\n");
+			err = telephony_generic_rsp(device,
+						CME_ERROR_NOT_SUPPORTED);
 			if (err < 0)
 				goto failed;
 		} else if (err < 0)
@@ -1514,7 +1516,6 @@ static void get_record_cb(sdp_list_t *recs, int err, gpointer user_data)
 
 		sdp_list_free(classes, free);
 
-
 		if (sdp_uuid_cmp(&class, &uuid) == 0)
 			break;
 	}
@@ -1537,7 +1538,8 @@ static void get_record_cb(sdp_list_t *recs, int err, gpointer user_data)
 	if (err < 0) {
 		error("Unable to connect: %s (%d)", strerror(-err), -err);
 		p->err = -err;
-		error_connect_failed(dev->conn, p->msg, p->err);
+		if (p->msg != NULL)
+			error_connect_failed(dev->conn, p->msg, p->err);
 		goto failed;
 	}
 
@@ -1623,6 +1625,7 @@ static int rfcomm_connect(struct audio_device *dev, headset_stream_cb_t cb,
 					BT_IO_OPT_SOURCE_BDADDR, &dev->src,
 					BT_IO_OPT_DEST_BDADDR, &dev->dst,
 					BT_IO_OPT_CHANNEL, hs->rfcomm_ch,
+					BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_MEDIUM,
 					BT_IO_OPT_INVALID);
 
 	hs->rfcomm_ch = -1;
@@ -1634,6 +1637,7 @@ static int rfcomm_connect(struct audio_device *dev, headset_stream_cb_t cb,
 	}
 
 	hs->hfp_active = hs->hfp_handle != 0 ? TRUE : FALSE;
+	hs->rfcomm_initiator = FALSE;
 
 	headset_set_state(dev, HEADSET_STATE_CONNECTING);
 
@@ -1771,7 +1775,7 @@ static DBusMessage *hs_ring(DBusConnection *conn, DBusMessage *msg,
 
 	if (ag.ring_timer) {
 		DBG("IndicateCall received when already indicating");
-		goto done;
+		return reply;
 	}
 
 	err = headset_send(hs, "\r\nRING\r\n");
@@ -1784,7 +1788,6 @@ static DBusMessage *hs_ring(DBusConnection *conn, DBusMessage *msg,
 	ag.ring_timer = g_timeout_add_seconds(RING_INTERVAL, ring_timer_cb,
 						NULL);
 
-done:
 	return reply;
 }
 
@@ -2052,6 +2055,7 @@ static DBusMessage *hs_set_property(DBusConnection *conn,
 
 	return btd_error_invalid_args(msg);
 }
+
 static GDBusMethodTable headset_methods[] = {
 	{ "Connect",		"",	"",	hs_connect,
 						G_DBUS_METHOD_FLAG_ASYNC },
@@ -2060,7 +2064,8 @@ static GDBusMethodTable headset_methods[] = {
 	{ "IndicateCall",	"",	"",	hs_ring },
 	{ "CancelCall",		"",	"",	hs_cancel_call },
 	{ "Play",		"",	"",	hs_play,
-						G_DBUS_METHOD_FLAG_ASYNC },
+						G_DBUS_METHOD_FLAG_ASYNC |
+						G_DBUS_METHOD_FLAG_DEPRECATED },
 	{ "Stop",		"",	"",	hs_stop },
 	{ "IsPlaying",		"",	"b",	hs_is_playing,
 						G_DBUS_METHOD_FLAG_DEPRECATED },
@@ -2163,8 +2168,7 @@ static void headset_free(struct audio_device *dev)
 
 	headset_close_rfcomm(dev);
 
-	g_slist_foreach(hs->nrec_cbs, (GFunc) g_free, NULL);
-	g_slist_free(hs->nrec_cbs);
+	g_slist_free_full(hs->nrec_cbs, g_free);
 
 	g_free(hs);
 	dev->headset = NULL;
@@ -2429,18 +2433,33 @@ unsigned int headset_suspend_stream(struct audio_device *dev,
 	return id;
 }
 
-gboolean get_hfp_active(struct audio_device *dev)
+gboolean headset_get_hfp_active(struct audio_device *dev)
 {
 	struct headset *hs = dev->headset;
 
 	return hs->hfp_active;
 }
 
-void set_hfp_active(struct audio_device *dev, gboolean active)
+void headset_set_hfp_active(struct audio_device *dev, gboolean active)
 {
 	struct headset *hs = dev->headset;
 
 	hs->hfp_active = active;
+}
+
+gboolean headset_get_rfcomm_initiator(struct audio_device *dev)
+{
+	struct headset *hs = dev->headset;
+
+	return hs->rfcomm_initiator;
+}
+
+void headset_set_rfcomm_initiator(struct audio_device *dev,
+					gboolean initiator)
+{
+	struct headset *hs = dev->headset;
+
+	hs->rfcomm_initiator = initiator;
 }
 
 GIOChannel *headset_get_rfcomm(struct audio_device *dev)

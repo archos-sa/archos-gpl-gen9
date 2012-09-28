@@ -97,6 +97,14 @@ Methods		dict GetProperties()
 			Possible errors: org.bluez.Error.InvalidArguments
 					 org.bluez.Error.DoesNotExist
 
+		void SetSecurity(byte leve)
+
+			Set the security level of a connected attrib link.
+			Can be set from LOW (1) to HIGH (3).
+
+			Possible errors: org.bluez.Error.InvalidArguments
+					 org.bluez.Error.Failed
+
 Signals		PropertyChanged(string name, variant value)
 
 			This signal indicates a changed value of the given
@@ -124,6 +132,22 @@ Properties	string Address [readonly]
 
 			The Bluetooth remote name. This value can not be
 			changed. Use the Alias property instead.
+
+		uint16 Vendor [readonly]
+
+			Vendor unique numeric identifier.
+
+		uint16 VendorSource [readonly]
+
+			Vendor source numeric identifier.
+
+		uint16 Product [readonly]
+
+			Product unique numeric identifier.
+
+		uint16 Version [readonly]
+
+			Version unique numeric identifier.
 
 		string Icon [readonly]
 
@@ -197,3 +221,15 @@ Properties	string Address [readonly]
 			Note that this property can exhibit false-positives
 			in the case of Bluetooth 2.1 (or newer) devices that
 			have disabled Extended Inquiry Response support.
+
+		uint32 Type [readonly]
+
+			Device address type. Can be one of:
+			ADDR_TYPE_BREDR (0)
+			ADDR_TYPE_LE_PUBLIC (1)
+			ADDR_TYPE_LE_RANDOM (2)
+
+		boolean WhiteList [readwrite]
+
+			When set indicates the device is in the LE auto-
+			connection white-list.

@@ -46,7 +46,7 @@
 #include "error.h"
 #include "sdpd.h"
 #include "btio.h"
-#include "glib-helper.h"
+#include "glib-compat.h"
 
 #include "common.h"
 #include "server.h"
@@ -409,13 +409,13 @@ static uint16_t bnep_setup_decode(struct bnep_setup_conn_req *req,
 
 	switch (req->uuid_size) {
 	case 2: /* UUID16 */
-		*dst_role = ntohs(bt_get_unaligned((uint16_t *) dest));
-		*src_role = ntohs(bt_get_unaligned((uint16_t *) source));
+		*dst_role = bt_get_be16(dest);
+		*src_role = bt_get_be16(source);
 		break;
 	case 4: /* UUID32 */
 	case 16: /* UUID128 */
-		*dst_role = ntohl(bt_get_unaligned((uint32_t *) dest));
-		*src_role = ntohl(bt_get_unaligned((uint32_t *) source));
+		*dst_role = bt_get_be32(dest);
+		*src_role = bt_get_be32(source);
 		break;
 	default:
 		return BNEP_CONN_INVALID_SVC;
@@ -435,6 +435,55 @@ static void setup_destroy(void *user_data)
 	na->setup = NULL;
 
 	session_free(setup);
+}
+
+static void process_ext_headers(int sk, struct bnep_ext_hdr *ehdr)
+{
+	/* ilia, pretend we handle them correctly */
+	struct bnep_ctrl_req *ctrl_req;
+	uint8_t pkt[4] = {0};
+	uint8_t psize = 0;
+
+	switch (ehdr->type & BNEP_TYPE_MASK) {
+	case BNEP_EXT_CONTROL:
+		pkt[0] = BNEP_CONTROL;
+
+		switch (ehdr->data[0]) {
+
+		case BNEP_FILTER_NET_TYPE_SET:
+			pkt[1] = BNEP_FILTER_NET_TYPE_RSP;
+			psize = 4;
+			break;
+
+		case BNEP_FILTER_MULT_ADDR_SET:
+			pkt[1] = BNEP_FILTER_MULT_ADDR_RSP;
+			psize = 4;
+			break;
+
+		default:
+			pkt[1] = BNEP_CMD_NOT_UNDERSTOOD;
+			pkt[2] = ehdr->data[0];
+			psize = 3;
+			break;
+		}
+
+		if (send(sk, pkt, psize, 0) == -1) {
+			error("%s: failed to send response",__FUNCTION__);
+			return;
+		}
+
+		break;
+
+	default:
+		/* Unknown extension, skip it. */
+		error("%s: Unknown extension, skip it.",__FUNCTION__);
+		break;
+	}
+
+	if (ehdr->type & BNEP_EXT_HEADER) {
+		process_ext_headers(sk, (struct bnep_ext_hdr *)
+			(((char*) ehdr) + sizeof(struct bnep_ext_hdr) + ehdr->len));
+	}
 }
 
 static gboolean bnep_setup(GIOChannel *chan,
@@ -466,7 +515,7 @@ static gboolean bnep_setup(GIOChannel *chan,
 
 	/* Highest known Control command ID
 	 * is BNEP_FILTER_MULT_ADDR_RSP = 0x06 */
-	if (req->type == BNEP_CONTROL &&
+	if ((req->type & BNEP_TYPE_MASK) == BNEP_CONTROL &&
 				req->ctrl > BNEP_FILTER_MULT_ADDR_RSP) {
 		uint8_t pkt[3];
 
@@ -479,7 +528,7 @@ static gboolean bnep_setup(GIOChannel *chan,
 		return FALSE;
 	}
 
-	if (req->type != BNEP_CONTROL || req->ctrl != BNEP_SETUP_CONN_REQ)
+	if ((req->type & BNEP_TYPE_MASK) != BNEP_CONTROL || req->ctrl != BNEP_SETUP_CONN_REQ)
 		return FALSE;
 
 	rsp = bnep_setup_decode(req, &dst_role, &src_role);
@@ -515,6 +564,11 @@ static gboolean bnep_setup(GIOChannel *chan,
 
 reply:
 	send_bnep_ctrl_rsp(sk, rsp);
+
+	if ((rsp == BNEP_SUCCESS) && (req->type & BNEP_EXT_HEADER)) {
+		process_ext_headers(sk, (struct bnep_ext_hdr *)
+			(packet + sizeof(struct bnep_setup_conn_req) + req->uuid_size*2));
+	}
 
 	return FALSE;
 }
@@ -784,10 +838,7 @@ static void server_free(struct network_server *ns)
 	g_free(ns->name);
 	g_free(ns->bridge);
 
-	if (ns->sessions) {
-		g_slist_foreach(ns->sessions, (GFunc) session_free, NULL);
-		g_slist_free(ns->sessions);
-	}
+	g_slist_free_full(ns->sessions, session_free);
 
 	g_free(ns);
 }

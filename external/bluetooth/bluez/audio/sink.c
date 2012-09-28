@@ -243,9 +243,11 @@ static void stream_state_changed(struct avdtp_stream *stream,
 					DBUS_TYPE_BOOLEAN, &value);
 		sink_set_state(dev, SINK_STATE_PLAYING);
 		break;
-	case AVDTP_STATE_CONFIGURED:
 	case AVDTP_STATE_CLOSING:
 	case AVDTP_STATE_ABORTING:
+		sink_set_state(dev, SINK_STATE_DISCONNECTED);
+		break;
+	case AVDTP_STATE_CONFIGURED:
 	default:
 		break;
 	}
@@ -339,7 +341,7 @@ static void select_complete(struct avdtp *session, struct a2dp_sep *sep,
 	pending = sink->connect;
 	pending->id = 0;
 
-	id = a2dp_config(session, sep, stream_setup_complete, caps, sink);
+	id = a2dp_config(session, sep, stream_setup_complete, caps, sink, 0);
 	if (id == 0)
 		goto failed;
 
@@ -721,11 +723,11 @@ gboolean sink_is_active(struct audio_device *dev)
 	return FALSE;
 }
 
-avdtp_state_t sink_get_state(struct audio_device *dev)
+sink_state_t sink_get_state(struct audio_device *dev)
 {
 	struct sink *sink = dev->sink;
 
-	return sink->stream_state;
+	return sink->state;
 }
 
 gboolean sink_new_stream(struct audio_device *dev, struct avdtp *session,

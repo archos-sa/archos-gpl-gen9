@@ -208,6 +208,12 @@ CFLAGS += -DCONFIG_P2P_STRICT
 endif
 endif
 
+ifdef CONFIG_WFD
+OBJS += ../src/wfd/wfd.o
+CFLAGS += -DCONFIG_WFD -I.
+endif
+
+
 ifdef CONFIG_NO_WPA2
 CFLAGS += -DCONFIG_NO_WPA2
 endif
@@ -687,6 +693,10 @@ OBJS += ../src/eap_server/eap_server_methods.o
 
 ifdef CONFIG_IEEE80211N
 CFLAGS += -DCONFIG_IEEE80211N
+endif
+
+ifdef CONFIG_ROAMING
+CFLAGS += -DCONFIG_ROAMING
 endif
 
 ifdef NEED_AP_MLME

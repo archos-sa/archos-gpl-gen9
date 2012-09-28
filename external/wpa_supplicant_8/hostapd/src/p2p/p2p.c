@@ -21,6 +21,7 @@
 #include "wps/wps_i.h"
 #include "p2p_i.h"
 #include "p2p.h"
+#include "wfd/wfd_i.h"
 
 
 static void p2p_state_timeout(void *eloop_ctx, void *timeout_ctx);
@@ -55,11 +56,38 @@ static void p2p_expire_peers(struct p2p_data *p2p)
 {
 	struct p2p_device *dev, *n;
 	struct os_time now;
+	size_t i;
 
 	os_get_time(&now);
 	dl_list_for_each_safe(dev, n, &p2p->devices, struct p2p_device, list) {
 		if (dev->last_seen.sec + P2P_PEER_EXPIRATION_AGE >= now.sec)
 			continue;
+
+		if (p2p->cfg->go_connected &&
+		    p2p->cfg->go_connected(p2p->cfg->cb_ctx,
+					   dev->info.p2p_device_addr)) {
+			/*
+			 * We are connected as a client to a group in which the
+			 * peer is the GO, so do not expire the peer entry.
+			 */
+			os_get_time(&dev->last_seen);
+			continue;
+		}
+
+		for (i = 0; i < p2p->num_groups; i++) {
+			if (p2p_group_is_client_connected(
+				    p2p->groups[i], dev->info.p2p_device_addr))
+				break;
+		}
+		if (i < p2p->num_groups) {
+			/*
+			 * The peer is connected as a client in a group where
+			 * we are the GO, so do not expire the peer entry.
+			 */
+			os_get_time(&dev->last_seen);
+			continue;
+		}
+
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Expiring old peer "
 			"entry " MACSTR, MAC2STR(dev->info.p2p_device_addr));
 		dl_list_del(&dev->list);
@@ -372,6 +400,9 @@ static int p2p_add_group_clients(struct p2p_data *p2p, const u8 *go_dev_addr,
 
 	for (c = 0; c < info.num_clients; c++) {
 		struct p2p_client_info *cli = &info.client[c];
+		if (os_memcmp(cli->p2p_device_addr, p2p->cfg->dev_addr,
+			      ETH_ALEN) == 0)
+			continue; /* ignore our own entry */
 		dev = p2p_get_device(p2p, cli->p2p_device_addr);
 		if (dev) {
 			/*
@@ -502,7 +533,8 @@ int p2p_add_device(struct p2p_data *p2p, const u8 *addr, int freq, int level,
 	struct p2p_device *dev;
 	struct p2p_message msg;
 	const u8 *p2p_dev_addr;
-	int i;
+	int i, changed = 0;
+	enum p2p_go_state old_state;
 
 	os_memset(&msg, 0, sizeof(msg));
 	if (p2p_parse_ies(ies, ies_len, &msg)) {
@@ -572,16 +604,40 @@ int p2p_add_device(struct p2p_data *p2p, const u8 *addr, int freq, int level,
 			"results (" MACSTR " %d -> %d MHz (DS param %d)",
 			MAC2STR(dev->info.p2p_device_addr), dev->listen_freq,
 			freq, msg.ds_params ? *msg.ds_params : -1);
+		changed = 1;
 	}
 	dev->listen_freq = freq;
-#ifdef ANDROID_BRCM_P2P_PATCH	
+
+	old_state = dev->go_state;
 	if(msg.group_info)
 		dev->go_state = REMOTE_GO;
-#endif
+	else
+		dev->go_state = UNKNOWN_GO;
+	changed |= (old_state != dev->go_state);
 
 	if (msg.group_info)
 		dev->oper_freq = freq;
 	dev->info.level = level;
+#ifdef CONFIG_WFD
+	dev->info.wfd_ie = ieee802_11_vendor_ie_concat(ies, ies_len,
+							WFD_IE_VENDOR_TYPE);
+	if (dev->info.wfd_ie) {
+		dev->flags |= P2P_DEV_WFD_SUPPORT;
+		if (!dev->info.wfd) {
+			dev->info.wfd = os_zalloc(sizeof(*dev->info.wfd));
+			if (!dev->info.wfd)
+				return -1;
+		}
+		/* Parse WFD IE */
+		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
+					"P2P: Parse WFD IE");
+		if (wfd_parse_ies(dev->info.wfd_ie, dev->info.wfd))
+			return -1;
+
+		if (wfd_add_device(p2p->wfd, dev->info.wfd, addr))
+			return -1;
+	}
+#endif /* CONFIG_WFD */
 
 	p2p_copy_wps_info(dev, 0, &msg);
 
@@ -607,7 +663,7 @@ int p2p_add_device(struct p2p_data *p2p, const u8 *addr, int freq, int level,
 	if (p2p_pending_sd_req(p2p, dev))
 		dev->flags |= P2P_DEV_SD_SCHEDULE;
 
-	if (dev->flags & P2P_DEV_REPORTED)
+	if ((dev->flags & P2P_DEV_REPORTED) && !changed)
 		return 0;
 
 	wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
@@ -631,9 +687,10 @@ static void p2p_device_free(struct p2p_data *p2p, struct p2p_device *dev)
 	int i;
 
 	if (p2p->go_neg_peer == dev) {
-#ifdef ANDROID_BRCM_P2P_PATCH
+		/*
+		 * If GO Negotiation is in progress, report that it has failed.
+		 */
 		p2p_go_neg_failed(p2p, dev, -1);
-#endif
 		p2p->go_neg_peer = NULL;
 	}
 	if (p2p->invite_peer == dev)
@@ -652,7 +709,15 @@ static void p2p_device_free(struct p2p_data *p2p, struct p2p_device *dev)
 		wpabuf_free(dev->info.wps_vendor_ext[i]);
 		dev->info.wps_vendor_ext[i] = NULL;
 	}
-
+#ifdef CONFIG_WFD
+	if (dev->info.wfd_ie) {
+		wpabuf_free(dev->info.wfd_ie);
+		dev->info.wfd_ie = NULL;
+		os_free(dev->info.wfd);
+		dev->info.wfd = NULL;
+		wfd_device_free(p2p->wfd, dev->info.p2p_device_addr);
+	}
+#endif /* CONFIG_WFD */
 	os_free(dev);
 }
 
@@ -1533,7 +1598,21 @@ static void p2p_add_dev_from_probe_req(struct p2p_data *p2p, const u8 *addr,
 						       msg.listen_channel[3],
 						       msg.listen_channel[4]);
 	}
-
+#ifdef CONFIG_WFD
+	dev->info.wfd_ie = ieee802_11_vendor_ie_concat(ie, ie_len,
+							WFD_IE_VENDOR_TYPE);
+	if (dev->info.wfd_ie) {
+		dev->flags |= P2P_DEV_WFD_SUPPORT;
+		dev->info.wfd = os_zalloc(sizeof(*dev->info.wfd));
+		if (dev->info.wfd)
+			return;
+		/* Parse WFD IE */
+		if (wfd_parse_ies(dev->info.wfd_ie, dev->info.wfd))
+			return;
+		if (wfd_add_device(p2p->wfd, dev->info.wfd, addr))
+			return;
+	}
+#endif /* CONFIG_WFD */
 	p2p_copy_wps_info(dev, 1, &msg);
 
 	p2p_parse_free(&msg);
@@ -1648,6 +1727,9 @@ struct wpabuf * p2p_build_probe_resp_ies(struct p2p_data *p2p)
 					      p2p->ext_listen_interval);
 	p2p_buf_add_device_info(buf, p2p, NULL);
 	p2p_buf_update_ie_hdr(buf, len);
+#ifdef CONFIG_WFD
+	wfd_build_prob_resp_ies(p2p->wfd, buf);
+#endif /* CONFIG_WFD */
 
 	return buf;
 }
@@ -2421,6 +2503,9 @@ void p2p_scan_ie(struct p2p_data *p2p, struct wpabuf *ies)
 					      p2p->ext_listen_interval);
 	/* TODO: p2p_buf_add_operating_channel() if GO */
 	p2p_buf_update_ie_hdr(ies, len);
+#ifdef CONFIG_WFD
+	wfd_build_probe_req_ies(p2p->wfd, ies);
+#endif
 }
 
 
@@ -3004,10 +3089,16 @@ int p2p_get_peer_info(struct p2p_data *p2p, const u8 *addr, int next,
 			  "country=%c%c\n"
 			  "oper_freq=%d\n"
 			  "req_config_methods=0x%x\n"
-			  "flags=%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n"
+			  "flags=%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n"
 			  "status=%d\n"
 			  "wait_count=%u\n"
-			  "invitation_reqs=%u\n",
+			  "invitation_reqs=%u\n"
+#ifdef CONFIG_WFD
+			  "wfd_device_info=0x%x\n"
+			  "wfd_session_mgmt_port=%u\n"
+			  "wfd_dev_max_tp=%u\n"
+#endif /* CONFIG_WFD */
+			  ,
 			  (int) (now.sec - dev->last_seen.sec),
 			  dev->listen_freq,
 			  dev->info.level,
@@ -3061,9 +3152,19 @@ int p2p_get_peer_info(struct p2p_data *p2p, const u8 *addr, int next,
 			  "[FORCE_FREQ]" : "",
 			  dev->flags & P2P_DEV_PD_FOR_JOIN ?
 			  "[PD_FOR_JOIN]" : "",
+			  dev->flags & P2P_DEV_WFD_SUPPORT ?
+			  "[WFD_SUPPORT]" : "",
 			  dev->status,
 			  dev->wait_count,
-			  dev->invitation_reqs);
+			  dev->invitation_reqs
+#ifdef CONFIG_WFD
+			  ,
+			  dev->info.wfd ?
+				dev->info.wfd->device_info_bitmap : 0xFF,
+			  dev->info.wfd ? dev->info.wfd->session_mng_port : 0,
+			  dev->info.wfd ? dev->info.wfd->maximum_tp : 0
+#endif /* CONFIG_WFD */
+			  );
 	if (res < 0 || res >= end - pos)
 		return pos - buf;
 	pos += res;
@@ -3653,3 +3754,9 @@ p2p_get_peer_found(struct p2p_data *p2p, const u8 *addr, int next)
 
 	return &dev->info;
 }
+#ifdef CONFIG_WFD
+void p2p_register_wfd(struct p2p_data *p2p, struct wfd_data *wfd)
+{
+	p2p->wfd = wfd;
+}
+#endif

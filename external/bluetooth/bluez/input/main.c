@@ -31,9 +31,11 @@
 
 #include <gdbus.h>
 
-#include "plugin.h"
+#include "hcid.h"
 #include "log.h"
+#include "plugin.h"
 #include "manager.h"
+#include "hog_manager.h"
 
 static GKeyFile *load_config_file(const char *file)
 {
@@ -69,6 +71,11 @@ static int input_init(void)
 		return -EIO;
 	}
 
+	if (hog_init() < 0) {
+		dbus_connection_unref(connection);
+		return -EIO;
+	}
+
 	if (config)
 		g_key_file_free(config);
 
@@ -79,8 +86,10 @@ static void input_exit(void)
 {
 	input_manager_exit();
 
+	hog_exit();
+
 	dbus_connection_unref(connection);
 }
 
-BLUETOOTH_PLUGIN_DEFINE(input, VERSION,
-			BLUETOOTH_PLUGIN_PRIORITY_DEFAULT, input_init, input_exit)
+BLUETOOTH_PLUGIN_DEFINE(input, VERSION, BLUETOOTH_PLUGIN_PRIORITY_DEFAULT,
+							input_init, input_exit)

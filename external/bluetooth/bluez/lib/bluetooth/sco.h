@@ -58,6 +58,11 @@ struct sco_conninfo {
 	uint8_t		dev_class[3];
 };
 
+#define SCO_CODING_FORMAT	0x03
+struct sco_coding_format {
+	uint8_t  coding_format;
+};
+
 #ifdef __cplusplus
 }
 #endif

@@ -21,6 +21,11 @@
  *  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  *
  */
+
+#ifdef HAVE_CONFIG_H
+#include <config.h>
+#endif
+
 #include <errno.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -30,41 +35,70 @@
 #include <bluetooth/hci.h>
 #include <bluetooth/sdp.h>
 
+#include "glib-compat.h"
 #include "glib-helper.h"
 #include "eir.h"
-
-#define EIR_FLAGS                   0x01  /* flags */
-#define EIR_UUID16_SOME             0x02  /* 16-bit UUID, more available */
-#define EIR_UUID16_ALL              0x03  /* 16-bit UUID, all listed */
-#define EIR_UUID32_SOME             0x04  /* 32-bit UUID, more available */
-#define EIR_UUID32_ALL              0x05  /* 32-bit UUID, all listed */
-#define EIR_UUID128_SOME            0x06  /* 128-bit UUID, more available */
-#define EIR_UUID128_ALL             0x07  /* 128-bit UUID, all listed */
-#define EIR_NAME_SHORT              0x08  /* shortened local name */
-#define EIR_NAME_COMPLETE           0x09  /* complete local name */
-#define EIR_TX_POWER                0x0A  /* transmit power level */
-#define EIR_DEVICE_ID               0x10  /* device ID */
+#include "log.h"
 
 void eir_data_free(struct eir_data *eir)
 {
-	g_slist_foreach(eir->services, (GFunc) g_free, NULL);
-	g_slist_free(eir->services);
+	g_slist_free_full(eir->services, g_free);
+	eir->services = NULL;
 	g_free(eir->name);
+	eir->name = NULL;
 }
 
-int eir_parse(struct eir_data *eir, uint8_t *eir_data)
+static void eir_parse_uuid16(struct eir_data *eir, void *data, uint8_t len)
 {
-	uint16_t len = 0;
-	size_t total;
-	size_t uuid16_count = 0;
-	size_t uuid32_count = 0;
-	size_t uuid128_count = 0;
-	uint8_t *uuid16 = NULL;
-	uint8_t *uuid32 = NULL;
-	uint8_t *uuid128 = NULL;
+	uint16_t *uuid16 = data;
 	uuid_t service;
 	char *uuid_str;
 	unsigned int i;
+
+	service.type = SDP_UUID16;
+	for (i = 0; i < len / 2; i++, uuid16++) {
+		service.value.uuid16 = btohs(bt_get_unaligned(uuid16));
+		uuid_str = bt_uuid2string(&service);
+		eir->services = g_slist_append(eir->services, uuid_str);
+	}
+}
+
+static void eir_parse_uuid32(struct eir_data *eir, void *data, uint8_t len)
+{
+	uint32_t *uuid32 = data;
+	uuid_t service;
+	char *uuid_str;
+	unsigned int i;
+
+	service.type = SDP_UUID32;
+	for (i = 0; i < len / 4; i++, uuid32++) {
+		service.value.uuid32 = btohl(bt_get_unaligned(uuid32));
+		uuid_str = bt_uuid2string(&service);
+		eir->services = g_slist_append(eir->services, uuid_str);
+	}
+}
+
+static void eir_parse_uuid128(struct eir_data *eir, uint8_t *data, uint8_t len)
+{
+	uint8_t *uuid_ptr = data;
+	uuid_t service;
+	char *uuid_str;
+	unsigned int i;
+	int k;
+
+	service.type = SDP_UUID128;
+	for (i = 0; i < len / 16; i++) {
+		for (k = 0; k < 16; k++)
+			service.value.uuid128.data[k] = uuid_ptr[16 - k - 1];
+		uuid_str = bt_uuid2string(&service);
+		eir->services = g_slist_append(eir->services, uuid_str);
+		uuid_ptr += 16;
+	}
+}
+
+int eir_parse(struct eir_data *eir, uint8_t *eir_data, uint8_t eir_len)
+{
+	uint16_t len = 0;
 
 	eir->flags = -1;
 
@@ -72,94 +106,66 @@ int eir_parse(struct eir_data *eir, uint8_t *eir_data)
 	if (eir_data == NULL)
 		return 0;
 
-	while (len < HCI_MAX_EIR_LENGTH - 1) {
+	while (len < eir_len - 1) {
 		uint8_t field_len = eir_data[0];
+		uint8_t data_len, *data = &eir_data[2];
 
 		/* Check for the end of EIR */
 		if (field_len == 0)
 			break;
 
+		len += field_len + 1;
+
+		/* Do not continue EIR Data parsing if got incorrect length */
+		if (len > eir_len)
+			break;
+
+		data_len = field_len - 1;
+
 		switch (eir_data[1]) {
 		case EIR_UUID16_SOME:
 		case EIR_UUID16_ALL:
-			uuid16_count = field_len / 2;
-			uuid16 = &eir_data[2];
+			eir_parse_uuid16(eir, data, data_len);
 			break;
+
 		case EIR_UUID32_SOME:
 		case EIR_UUID32_ALL:
-			uuid32_count = field_len / 4;
-			uuid32 = &eir_data[2];
+			eir_parse_uuid32(eir, data, data_len);
 			break;
+
 		case EIR_UUID128_SOME:
 		case EIR_UUID128_ALL:
-			uuid128_count = field_len / 16;
-			uuid128 = &eir_data[2];
+			eir_parse_uuid128(eir, data, data_len);
 			break;
+
 		case EIR_FLAGS:
-			eir->flags = eir_data[2];
+			if (data_len > 0)
+				eir->flags = *data;
 			break;
+
 		case EIR_NAME_SHORT:
 		case EIR_NAME_COMPLETE:
-			if (g_utf8_validate((char *) &eir_data[2],
-							field_len - 1, NULL))
-				eir->name = g_strndup((char *) &eir_data[2],
-								field_len - 1);
-			else
-				eir->name = g_strdup("");
+			/* Some vendors put a NUL byte terminator into
+			 * the name */
+			while (data_len > 0 && data[data_len - 1] == '\0')
+				data_len--;
+
+			if (!g_utf8_validate((char *) data, data_len, NULL))
+				break;
+
+			g_free(eir->name);
+
+			eir->name = g_strndup((char *) data, data_len);
 			eir->name_complete = eir_data[1] == EIR_NAME_COMPLETE;
 			break;
+
+		case EIR_CLASS_OF_DEV:
+			if (data_len < 3)
+				break;
+			memcpy(eir->dev_class, data, 3);
 		}
 
-		len += field_len + 1;
 		eir_data += field_len + 1;
-	}
-
-	/* Bail out if got incorrect length */
-	if (len > HCI_MAX_EIR_LENGTH)
-		return -EINVAL;
-
-	total = uuid16_count + uuid32_count + uuid128_count;
-
-	/* No UUIDs were parsed, so skip code below */
-	if (!total)
-		return 0;
-
-	/* Generate uuids in SDP format (EIR data is Little Endian) */
-	service.type = SDP_UUID16;
-	for (i = 0; i < uuid16_count; i++) {
-		uint16_t val16 = uuid16[1];
-
-		val16 = (val16 << 8) + uuid16[0];
-		service.value.uuid16 = val16;
-		uuid_str = bt_uuid2string(&service);
-		eir->services = g_slist_append(eir->services, uuid_str);
-		uuid16 += 2;
-	}
-
-	service.type = SDP_UUID32;
-	for (i = uuid16_count; i < uuid32_count + uuid16_count; i++) {
-		uint32_t val32 = uuid32[3];
-		int k;
-
-		for (k = 2; k >= 0; k--)
-			val32 = (val32 << 8) + uuid32[k];
-
-		service.value.uuid32 = val32;
-		uuid_str = bt_uuid2string(&service);
-		eir->services = g_slist_append(eir->services, uuid_str);
-		uuid32 += 4;
-	}
-
-	service.type = SDP_UUID128;
-	for (i = uuid32_count + uuid16_count; i < total; i++) {
-		int k;
-
-		for (k = 0; k < 16; k++)
-			service.value.uuid128.data[k] = uuid128[16 - k - 1];
-
-		uuid_str = bt_uuid2string(&service);
-		eir->services = g_slist_append(eir->services, uuid_str);
-		uuid128 += 16;
 	}
 
 	return 0;
@@ -325,4 +331,63 @@ void eir_create(const char *name, int8_t tx_power, uint16_t did_vendor,
 	/* Group all UUID128 types */
 	if (eir_len <= HCI_MAX_EIR_LENGTH - 2)
 		eir_generate_uuid128(uuids, ptr, &eir_len);
+}
+
+gboolean eir_has_data_type(uint8_t *data, size_t len, uint8_t type)
+{
+	uint8_t field_len;
+	size_t parsed = 0;
+
+	while (parsed < len - 1) {
+		field_len = data[0];
+
+		if (field_len == 0)
+			break;
+
+		parsed += field_len + 1;
+
+		if (parsed > len)
+			break;
+
+		if (data[1] == type)
+			return TRUE;
+
+		data += field_len + 1;
+	}
+
+	return FALSE;
+}
+
+size_t eir_append_data(uint8_t *eir, size_t eir_len, uint8_t type,
+						uint8_t *data, size_t data_len)
+{
+	eir[eir_len++] = sizeof(type) + data_len;
+	eir[eir_len++] = type;
+	memcpy(&eir[eir_len], data, data_len);
+	eir_len += data_len;
+
+	return eir_len;
+}
+
+size_t eir_length(uint8_t *eir, size_t maxlen)
+{
+	uint8_t field_len;
+	size_t parsed = 0, length = 0;
+
+	while (parsed < maxlen - 1) {
+		field_len = eir[0];
+
+		if (field_len == 0)
+			break;
+
+		parsed += field_len + 1;
+
+		if (parsed > maxlen)
+			break;
+
+		length = parsed;
+		eir += field_len + 1;
+	}
+
+	return length;
 }

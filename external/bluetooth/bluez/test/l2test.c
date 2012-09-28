@@ -97,7 +97,17 @@ static int num_frames = -1;
 static int count = 1;
 
 /* Default delay after sending count number of frames */
+static unsigned long send_delay = 0;
+
+/* Default delay before receiving */
+static unsigned long recv_delay = 0;
+
 static unsigned long delay = 0;
+static unsigned long delay_before_first_frame = 0;
+static unsigned long delay_after_last_frame = 0;
+
+/* Default operation mode */
+static int one_time = 0;
 
 static char *filename = NULL;
 
@@ -111,6 +121,53 @@ static int linger = 0;
 static int reliable = 0;
 static int timestamp = 0;
 static int defer_setup = 0;
+static int priority = -1;
+static int rcvbuf = 0;
+static int chan_policy = -1;
+
+struct lookup_table {
+	char	*name;
+	int	flag;
+};
+
+static struct lookup_table l2cap_modes[] = {
+	{ "basic",	L2CAP_MODE_BASIC	},
+	/* Not implemented
+	{ "flowctl",	L2CAP_MODE_FLOWCTL	},
+	{ "retrans",	L2CAP_MODE_RETRANS	},
+	*/
+	{ "ertm",	L2CAP_MODE_ERTM		},
+	{ "streaming",	L2CAP_MODE_STREAMING	},
+	{ 0 }
+};
+
+static struct lookup_table chan_policies[] = {
+	{ "bredr",	BT_CHANNEL_POLICY_BREDR_ONLY		},
+	{ "bredr_pref",	BT_CHANNEL_POLICY_BREDR_PREFERRED	},
+	{ "amp_pref",	BT_CHANNEL_POLICY_AMP_PREFERRED		},
+	{ NULL,		0					},
+};
+
+static int get_lookup_flag(struct lookup_table *table, char *name)
+{
+	int i;
+
+	for (i = 0; table[i].name; i++)
+		if (!strcasecmp(table[i].name, name))
+			return table[i].flag;
+
+	return -1;
+}
+
+static void print_lookup_values(struct lookup_table *table, char *header)
+{
+	int i;
+
+	printf("%s\n", header);
+
+	for (i = 0; table[i].name; i++)
+		printf("\t%s\n", table[i].name);
+}
 
 static float tv2fl(struct timeval tv)
 {
@@ -254,6 +311,15 @@ static int do_connect(char *svr)
 	}
 #endif
 
+	if (chan_policy != -1) {
+		if (setsockopt(sk, SOL_BLUETOOTH, BT_CHANNEL_POLICY,
+				&chan_policy, sizeof(chan_policy)) < 0) {
+			syslog(LOG_ERR, "Can't enable chan policy : %s (%d)",
+							strerror(errno), errno);
+			goto error;
+		}
+	}
+
 	/* Enable SO_LINGER */
 	if (linger) {
 		struct linger l = { .l_onoff = 1, .l_linger = linger };
@@ -280,6 +346,21 @@ static int do_connect(char *svr)
 
 	if (setsockopt(sk, SOL_L2CAP, L2CAP_LM, &opt, sizeof(opt)) < 0) {
 		syslog(LOG_ERR, "Can't set L2CAP link mode: %s (%d)",
+							strerror(errno), errno);
+		goto error;
+	}
+
+	/* Set receive buffer size */
+	if (rcvbuf && setsockopt(sk, SOL_SOCKET, SO_RCVBUF,
+						&rcvbuf, sizeof(rcvbuf)) < 0) {
+		syslog(LOG_ERR, "Can't set socket rcv buf size: %s (%d)",
+							strerror(errno), errno);
+		goto error;
+	}
+
+	optlen = sizeof(rcvbuf);
+	if (getsockopt(sk, SOL_SOCKET, SO_RCVBUF, &rcvbuf, &optlen) < 0) {
+		syslog(LOG_ERR, "Can't get socket rcv buf size: %s (%d)",
 							strerror(errno), errno);
 		goto error;
 	}
@@ -321,10 +402,24 @@ static int do_connect(char *svr)
 		goto error;
 	}
 
+	if (priority > 0 && setsockopt(sk, SOL_SOCKET, SO_PRIORITY, &priority,
+						sizeof(priority)) < 0) {
+		syslog(LOG_ERR, "Can't set socket priority: %s (%d)",
+							strerror(errno), errno);
+		goto error;
+	}
+
+	if (getsockopt(sk, SOL_SOCKET, SO_PRIORITY, &opt, &optlen) < 0) {
+		syslog(LOG_ERR, "Can't get socket priority: %s (%d)",
+							strerror(errno), errno);
+		goto error;
+	}
+
 	syslog(LOG_INFO, "Connected [imtu %d, omtu %d, flush_to %d, "
-				"mode %d, handle %d, class 0x%02x%02x%02x]",
+		"mode %d, handle %d, class 0x%02x%02x%02x, priority %d, rcvbuf %d]",
 		opts.imtu, opts.omtu, opts.flush_to, opts.mode, conn.hci_handle,
-		conn.dev_class[2], conn.dev_class[1], conn.dev_class[0]);
+		conn.dev_class[2], conn.dev_class[1], conn.dev_class[0], opt,
+		rcvbuf);
 
 	omtu = (opts.omtu > buffer_size) ? buffer_size : opts.omtu;
 	imtu = (opts.imtu > buffer_size) ? buffer_size : opts.imtu;
@@ -430,6 +525,7 @@ static void do_listen(void (*handler)(int sk))
 		goto error;
 	}
 
+
 	/* Listen for connections */
 	if (listen(sk, 10)) {
 		syslog(LOG_ERR, "Can not listen on the socket: %s (%d)",
@@ -462,13 +558,35 @@ static void do_listen(void (*handler)(int sk))
 							strerror(errno), errno);
 			goto error;
 		}
-		if (fork()) {
-			/* Parent */
-			close(nsk);
-			continue;
+
+		if (one_time == 0) {
+			if (fork()) {
+				/* Parent */
+				close(nsk);
+				continue;
+			}
+			/* Child */
+			close(sk);
 		}
-		/* Child */
-		close(sk);
+		else {
+			close(sk);
+		}
+
+		/* Set receive buffer size */
+		if (rcvbuf && setsockopt(nsk, SOL_SOCKET, SO_RCVBUF, &rcvbuf,
+							sizeof(rcvbuf)) < 0) {
+			syslog(LOG_ERR, "Can't set rcv buf size: %s (%d)",
+							strerror(errno), errno);
+			goto error;
+		}
+
+		optlen = sizeof(rcvbuf);
+		if (getsockopt(nsk, SOL_SOCKET, SO_RCVBUF, &rcvbuf, &optlen)
+									< 0) {
+			syslog(LOG_ERR, "Can't get rcv buf size: %s (%d)",
+							strerror(errno), errno);
+			goto error;
+		}
 
 		/* Get current options */
 		memset(&opts, 0, sizeof(opts));
@@ -496,11 +614,29 @@ static void do_listen(void (*handler)(int sk))
 			}
 		}
 
+		if (priority > 0 && setsockopt(sk, SOL_SOCKET, SO_PRIORITY,
+					&priority, sizeof(priority)) < 0) {
+			syslog(LOG_ERR, "Can't set socket priority: %s (%d)",
+						strerror(errno), errno);
+			close(nsk);
+			goto error;
+		}
+
+		optlen = sizeof(priority);
+		if (getsockopt(nsk, SOL_SOCKET, SO_PRIORITY, &opt, &optlen) < 0) {
+			syslog(LOG_ERR, "Can't get socket priority: %s (%d)",
+							strerror(errno), errno);
+			goto error;
+		}
+
 		ba2str(&addr.l2_bdaddr, ba);
-		syslog(LOG_INFO, "Connect from %s [imtu %d, omtu %d, flush_to %d, "
-					"mode %d, handle %d, class 0x%02x%02x%02x]",
-			ba, opts.imtu, opts.omtu, opts.flush_to, opts.mode, conn.hci_handle,
-			conn.dev_class[2], conn.dev_class[1], conn.dev_class[0]);
+		syslog(LOG_INFO, "Connect from %s [imtu %d, omtu %d, "
+				"flush_to %d, mode %d, handle %d, "
+				"class 0x%02x%02x%02x, priority %d, rcvbuf %d]",
+				ba, opts.imtu, opts.omtu, opts.flush_to,
+				opts.mode, conn.hci_handle, conn.dev_class[2],
+				conn.dev_class[1], conn.dev_class[0], opt,
+				rcvbuf);
 
 		omtu = (opts.omtu > buffer_size) ? buffer_size : opts.omtu;
 		imtu = (opts.imtu > buffer_size) ? buffer_size : opts.imtu;
@@ -543,7 +679,7 @@ static void do_listen(void (*handler)(int sk))
 		}
 
 		handler(nsk);
-
+		close(nsk);
 		syslog(LOG_INFO, "Disconnect: %m");
 		exit(0);
 	}
@@ -631,6 +767,9 @@ static void recv_mode(int sk)
 		else
 			syslog(LOG_INFO, "Initial bytes %d", len);
 	}
+
+	if (recv_delay)
+		usleep(recv_delay);
 
 	syslog(LOG_INFO, "Receiving ...");
 
@@ -754,6 +893,7 @@ static void do_send(int sk)
 	}
 
 	seq = 0;
+	sleep(delay_before_first_frame);
 	while ((num_frames == -1) || (num_frames-- > 0)) {
 		*(uint32_t *) buf = htobl(seq);
 		*(uint16_t *) (buf + 4) = htobs(data_size);
@@ -775,9 +915,10 @@ static void do_send(int sk)
 			size -= len;
 		}
 
-		if (num_frames && delay && count && !(seq % count))
-			usleep(delay);
+		if (num_frames && send_delay && count && !(seq % count))
+			usleep(send_delay);
 	}
+	sleep(delay_after_last_frame);
 }
 
 static void send_mode(int sk)
@@ -948,25 +1089,25 @@ static void info_request(char *svr)
 	case 0x0000:
 		memcpy(&mask, rsp->data, sizeof(mask));
 		printf("Extended feature mask is 0x%04x\n", btohl(mask));
-		if (mask & 0x01)
+		if (mask & L2CAP_FEAT_FLOWCTL)
 			printf("  Flow control mode\n");
-		if (mask & 0x02)
+		if (mask & L2CAP_FEAT_RETRANS)
 			printf("  Retransmission mode\n");
-		if (mask & 0x04)
+		if (mask & L2CAP_FEAT_BIDIR_QOS)
 			printf("  Bi-directional QoS\n");
-		if (mask & 0x08)
+		if (mask & L2CAP_FEAT_ERTM)
 			printf("  Enhanced Retransmission mode\n");
-		if (mask & 0x10)
+		if (mask & L2CAP_FEAT_STREAMING)
 			printf("  Streaming mode\n");
-		if (mask & 0x20)
+		if (mask & L2CAP_FEAT_FCS)
 			printf("  FCS Option\n");
-		if (mask & 0x40)
+		if (mask & L2CAP_FEAT_EXT_FLOW)
 			printf("  Extended Flow Specification\n");
-		if (mask & 0x80)
+		if (mask & L2CAP_FEAT_FIXED_CHAN)
 			printf("  Fixed Channels\n");
-		if (mask & 0x0100)
+		if (mask & L2CAP_FEAT_EXT_WINDOW)
 			printf("  Extended Window Size\n");
-		if (mask & 0x0200)
+		if (mask & L2CAP_FEAT_UCD)
 			printf("  Unicast Connectionless Data Reception\n");
 		break;
 	case 0x0001:
@@ -1055,8 +1196,7 @@ failed:
 
 static void usage(void)
 {
-	printf("l2test - L2CAP testing\n"
-		"Usage:\n");
+	printf("Usage:\n");
 	printf("\tl2test <mode> [options] [bdaddr]\n");
 	printf("Modes:\n"
 		"\t-r listen and receive\n"
@@ -1083,10 +1223,14 @@ static void usage(void)
 		"\t[-N num] send num frames (default = infinite)\n"
 		"\t[-C num] send num frames before delay (default = 1)\n"
 		"\t[-D milliseconds] delay after sending num frames (default = 0)\n"
-		"\t[-X mode] select retransmission/flow-control mode\n"
+		"\t[-K milliseconds] delay before receiving (default = 0)\n"
+		"\t[-X mode] l2cap mode (help for list, default = basic)\n"
+		"\t[-a policy] chan policy (help for list, default = bredr)\n"
 		"\t[-F fcs] use CRC16 check (default = 1)\n"
 		"\t[-Q num] Max Transmit value (default = 3)\n"
 		"\t[-Z size] Transmission Window size (default = 63)\n"
+		"\t[-Y priority] socket priority\n"
+		"\t[-H size] Maximum receive buffer size\n"
 		"\t[-R] reliable mode\n"
 		"\t[-G] use connectionless channel (datagram)\n"
 		"\t[-U] use sock stream\n"
@@ -1094,7 +1238,10 @@ static void usage(void)
 		"\t[-E] request encryption\n"
 		"\t[-S] secure connection\n"
 		"\t[-M] become master\n"
-		"\t[-T] enable timestamps\n");
+		"\t[-T] enable timestamps\n"
+		"\t[-H seconds] Delay before first sent frame (default = 0)\n"
+		"\t[-K seconds] Delay after last sent frame, before disconnection (default = 0)\n"
+		"\t[-Y] One time only (do not listen for more incoming connections)");
 }
 
 int main(int argc, char *argv[])
@@ -1102,10 +1249,13 @@ int main(int argc, char *argv[])
 	struct sigaction sa;
 	int opt, sk, mode = RECV, need_addr = 0;
 
+	printf("l2test - L2CAP testing version:%s (compiled %s)\n",VERSION,COMPILEDATE);
+
 	bacpy(&bdaddr, BDADDR_ANY);
 
-	while ((opt=getopt(argc,argv,"rdscuwmntqxyzpb:i:P:I:O:J:B:N:L:W:C:D:X:F:Q:Z:RUGAESMT")) != EOF) {
-		switch(opt) {
+	while ((opt = getopt(argc, argv, "rdscuwmntqxyzpb:a:o:"
+		"i:P:I:O:J:B:N:L:W:C:D:X:F:Q:Z:Y:H:K:O:V:RUGAESMT")) != EOF) {
+		switch (opt) {
 		case 'r':
 			mode = RECV;
 			break;
@@ -1174,6 +1324,14 @@ int main(int argc, char *argv[])
 			data_size = atoi(optarg);
 			break;
 
+		case 'v':
+			delay_before_first_frame = atoi(optarg);
+			break;
+
+		case 'V':
+			delay_after_last_frame = atoi(optarg);
+			break;
+
 		case 'i':
 			if (!strncasecmp(optarg, "hci", 3))
 				hci_devba(atoi(optarg + 3), &bdaddr);
@@ -1214,14 +1372,37 @@ int main(int argc, char *argv[])
 			break;
 
 		case 'D':
-			delay = atoi(optarg) * 1000;
+			send_delay = atoi(optarg) * 1000;
+			break;
+
+		case 'K':
+			recv_delay = atoi(optarg) * 1000;
 			break;
 
 		case 'X':
-			if (strcasecmp(optarg, "ertm") == 0)
-				rfcmode = L2CAP_MODE_ERTM;
-			else
-				rfcmode = atoi(optarg);
+			rfcmode = get_lookup_flag(l2cap_modes, optarg);
+
+			if (rfcmode == -1) {
+				print_lookup_values(l2cap_modes,
+						"List L2CAP modes:");
+				exit(1);
+			}
+
+			break;
+
+		case 'a':
+			chan_policy = get_lookup_flag(chan_policies, optarg);
+
+			if (chan_policy == -1) {
+				print_lookup_values(chan_policies,
+						"List L2CAP chan policies:");
+				exit(1);
+			}
+
+			break;
+
+		case 'Y':
+			priority = atoi(optarg);
 			break;
 
 		case 'F':
@@ -1270,6 +1451,13 @@ int main(int argc, char *argv[])
 
 		case 'J':
 			cid = atoi(optarg);
+			break;
+
+		case 'H':
+			rcvbuf = atoi(optarg);
+			break;
+		case 'o':
+			one_time = 1;
 			break;
 
 		default:

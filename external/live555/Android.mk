@@ -1,7 +1,7 @@
 LOCAL_PATH:= $(call my-dir)
 include $(CLEAR_VARS)
 
-live555_DEFINES = -DSOCKLEN_T=socklen_t -DNO_SSTREAM=1 -D_LARGEFILE_SOURCE=1 -D_FILE_OFFSET_BITS=64 -DDEBUG=1 -DREAD_FROM_FILES_SYNCHRONOUSLY=1 -DXLOCALE_NOT_USED=1
+live555_DEFINES = -DSOCKLEN_T=socklen_t -DNO_SSTREAM=1 -D_LARGEFILE_SOURCE=1 -D_FILE_OFFSET_BITS=64 -DREAD_FROM_FILES_SYNCHRONOUSLY=1 -DXLOCALE_NOT_USED=1 #-DDEBUG=1
 
 LOCAL_SRC_FILES := \
 	BasicUsageEnvironment/BasicTaskScheduler0.cpp\
@@ -169,6 +169,8 @@ LOCAL_SRC_FILES += \
 	liveMedia/rtcp_from_spec.c\
 	liveMedia/our_md5hl.c\
 	liveMedia/our_md5.c\
+	liveMedia/ADTSAudioStreamFramer.cpp\
+	liveMedia/ADTSAudioStreamParser.cpp\
 
 LOCAL_SRC_FILES += \
 	mediaServer/live555MediaServer.cpp\
@@ -182,7 +184,6 @@ LOCAL_SRC_FILES += \
 LOCAL_C_INCLUDES += $(LOCAL_PATH)\
 	$(LOCAL_PATH)/BasicUsageEnvironment/include/\
 	$(LOCAL_PATH)/groupsock/include/\
-	$(LOCAL_PATH)/liveMedia/include/\
 	$(LOCAL_PATH)/liveMedia/include/\
 	$(LOCAL_PATH)/liveMedia/\
 	$(LOCAL_PATH)/mediaServer/\

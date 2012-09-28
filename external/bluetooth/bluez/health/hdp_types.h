@@ -3,9 +3,6 @@
  *  BlueZ - Bluetooth protocol stack for Linux
  *
  *  Copyright (C) 2010 GSyC/LibreSoft, Universidad Rey Juan Carlos.
- *  Authors:
- *  Santiago Carot Nemesio <sancane at gmail.com>
- *  Jose Antonio Santos-Cadenas <santoscadenas at gmail.com>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -84,7 +81,7 @@ struct hdp_application {
 	char			*description;	/* Options description for SDP record */
 	uint8_t			id;		/* The identification is also the mdepid */
 	char			*oname;		/* Name of the owner application */
-	int			dbus_watcher;	/* Watch for clients disconnection */
+	guint			dbus_watcher;	/* Watch for clients disconnection */
 	gint			ref;		/* Reference counter */
 };
 

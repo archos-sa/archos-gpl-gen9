@@ -161,6 +161,11 @@ static struct tupla ServiceClass[] = {
 	{ PBAP_PCE_SVCLASS_ID,			"Phonebook Access - PCE"	},
 	{ PBAP_PSE_SVCLASS_ID,			"Phonebook Access - PSE"	},
 	{ PBAP_SVCLASS_ID,			"Phonebook Access"		},
+/* TIBLUEZ 1.0 START */
+	{ MAP_MSE_SVCLASS_ID,		"Message Access Server"			},
+	{ MAP_MCE_SVCLASS_ID,		"Message Notification Server"	},
+	{ MAP_SVCLASS_ID,			"Message Access Profile"		},
+/* TIBLUEZ 1.0 END */
 	{ PNP_INFO_SVCLASS_ID,			"PnP Information"		},
 	{ GENERIC_NETWORKING_SVCLASS_ID,	"Generic Networking"		},
 	{ GENERIC_FILETRANS_SVCLASS_ID,		"Generic File Transfer"		},
@@ -2065,7 +2070,7 @@ int sdp_get_profile_descs(const sdp_record_t *rec, sdp_list_t **profDescSeq)
 
 		if (SDP_IS_UUID(seq->dtd)) {
 			uuid = &seq->val.uuid;
-		} else {
+		} else if (SDP_IS_SEQ(seq->dtd)) {
 			sdp_data_t *puuid = seq->val.dataseq;
 			sdp_data_t *pVnum = seq->val.dataseq->next;
 			if (puuid && pVnum) {
@@ -3406,7 +3411,9 @@ int sdp_service_search_req(sdp_session_t *session, const sdp_list_t *search,
 		scanned += sizeof(uint16_t);
 		pdata_len -= sizeof(uint16_t);
 
-		SDPDBG("Total svc count: %d\n", total_rec_count);
+/* TIBLUEZ 1.0 START */
+		/* SDPDBG("Total svc count: %d\n", total_rec_count); */
+/* TIBLUEZ 1.0 END */
 		SDPDBG("Current svc count: %d\n", rec_count);
 		SDPDBG("ResponseLength: %d\n", rsplen);
 

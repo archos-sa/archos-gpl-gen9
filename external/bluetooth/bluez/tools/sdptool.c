@@ -226,6 +226,11 @@ static struct attrib_def audio_attrib_names[] = {
 	{ 0x302, "Remote audio volume control", NULL, 0 },
 };
 
+/* Name of the various GOEP attributes. See BT assigned numbers */
+static struct attrib_def goep_attrib_names[] = {
+	{ 0x200, "GoepL2capPsm", NULL, 0 },
+};
+
 /* Same for the UUIDs. See BT assigned numbers */
 static struct uuid_def uuid16_names[] = {
 	/* -- Protocols -- */
@@ -261,8 +266,10 @@ static struct uuid_def uuid16_names[] = {
 	{ 0x1102, "LANAccessUsingPPP", NULL, 0 },
 	{ 0x1103, "DialupNetworking (DUN)", NULL, 0 },
 	{ 0x1104, "IrMCSync", NULL, 0 },
-	{ 0x1105, "OBEXObjectPush", NULL, 0 },
-	{ 0x1106, "OBEXFileTransfer", NULL, 0 },
+	{ 0x1105, "OBEXObjectPush",
+		goep_attrib_names, sizeof(goep_attrib_names)/sizeof(struct attrib_def) },
+	{ 0x1106, "OBEXFileTransfer",
+		goep_attrib_names, sizeof(goep_attrib_names)/sizeof(struct attrib_def) },
 	{ 0x1107, "IrMCSyncCommand", NULL, 0 },
 	{ 0x1108, "Headset",
 		audio_attrib_names, sizeof(audio_attrib_names)/sizeof(struct attrib_def) },
@@ -310,6 +317,11 @@ static struct uuid_def uuid16_names[] = {
 	{ 0x112e, "Phonebook Access (PBAP) - PCE", NULL, 0 },
 	{ 0x112f, "Phonebook Access (PBAP) - PSE", NULL, 0 },
 	{ 0x1130, "Phonebook Access (PBAP)", NULL, 0 },
+/* TIBLUEZ 1.0 START */
+	{ 0x1132, "Message Access Server", NULL, 0 },
+	{ 0x1133, "Message Notification Server", NULL, 0 },
+	{ 0x1134, "Message Access Profile", NULL, 0 },
+/* TIBLUEZ 1.0 END */
 	/* ... */
 	{ 0x1200, "PnPInformation",
 		did_attrib_names, sizeof(did_attrib_names)/sizeof(struct attrib_def) },
@@ -1892,6 +1904,85 @@ end:
 
 	return ret;
 }
+
+/* TIBLUEZ 1.0 START */
+static int add_map_sms_gsm(sdp_session_t *session, svc_info_t *si)
+{
+	sdp_list_t *svclass_id, *pfseq, *apseq, *root;
+	uuid_t root_uuid, map_uuid, l2cap_uuid, rfcomm_uuid, obex_uuid;
+	sdp_profile_desc_t profile[1];
+	sdp_list_t *aproto, *proto[3];
+	sdp_record_t record;
+	uint8_t chan = si->channel ? si->channel : 21;
+	sdp_data_t *channel;
+	uint8_t mas_instance_id[] = {0x00};
+	/* Message types: bits [3:0] = MMS:SMS_CDMA:SMS_GSM:EMAIL, bits [7:4] - reserved */
+	uint8_t supported_message_types[] = {0x02};
+	uint8_t dtd = SDP_UINT8;
+	sdp_data_t *sflist;
+	int ret = 0;
+
+	memset(&record, 0, sizeof(sdp_record_t));
+	record.handle = si->handle;
+
+	sdp_uuid16_create(&root_uuid, PUBLIC_BROWSE_GROUP);
+	root = sdp_list_append(0, &root_uuid);
+	sdp_set_browse_groups(&record, root);
+
+	sdp_uuid16_create(&map_uuid, MAP_MSE_SVCLASS_ID);
+	svclass_id = sdp_list_append(0, &map_uuid);
+	sdp_set_service_classes(&record, svclass_id);
+
+	sdp_uuid16_create(&profile[0].uuid, MAP_PROFILE_ID);
+	profile[0].version = 0x0100;
+	pfseq = sdp_list_append(0, profile);
+	sdp_set_profile_descs(&record, pfseq);
+
+	sdp_uuid16_create(&l2cap_uuid, L2CAP_UUID);
+	proto[0] = sdp_list_append(0, &l2cap_uuid);
+	apseq = sdp_list_append(0, proto[0]);
+
+	sdp_uuid16_create(&rfcomm_uuid, RFCOMM_UUID);
+	proto[1] = sdp_list_append(0, &rfcomm_uuid);
+	channel = sdp_data_alloc(SDP_UINT8, &chan);
+	proto[1] = sdp_list_append(proto[1], channel);
+	apseq = sdp_list_append(apseq, proto[1]);
+
+	sdp_uuid16_create(&obex_uuid, OBEX_UUID);
+	proto[2] = sdp_list_append(0, &obex_uuid);
+	apseq = sdp_list_append(apseq, proto[2]);
+
+	aproto = sdp_list_append(0, apseq);
+	sdp_set_access_protos(&record, aproto);
+
+	sflist = sdp_data_alloc(dtd, mas_instance_id);
+	sdp_attr_add(&record, SDP_ATTR_MAS_INSTANCE_ID, sflist);
+
+	sflist = sdp_data_alloc(dtd, supported_message_types);
+	sdp_attr_add(&record, SDP_ATTR_SUPPORTED_MESSAGE_TYPES, sflist);
+
+	sdp_set_info_attr(&record, "OBEX Message Access Server SMS_GSM", 0, 0);
+
+	if (sdp_device_record_register(session, &interface, &record,
+			SDP_RECORD_PERSIST) < 0) {
+		printf("Service Record registration failed\n");
+		ret = -1;
+		goto end;
+	}
+
+	printf("MAP MAS SMS_GSM service registered\n");
+
+end:
+	sdp_data_free(channel);
+	sdp_list_free(proto[0], 0);
+	sdp_list_free(proto[1], 0);
+	sdp_list_free(proto[2], 0);
+	sdp_list_free(apseq, 0);
+	sdp_list_free(aproto, 0);
+
+	return ret;
+}
+/* TIBLUEZ 1.0 END */
 
 static int add_ftp(sdp_session_t *session, svc_info_t *si)
 {
@@ -3520,6 +3611,9 @@ struct {
 	{ "HFAG",	HANDSFREE_AGW_SVCLASS_ID,	add_handsfree_ag},
 	{ "SAP",	SAP_SVCLASS_ID,			add_simaccess	},
 	{ "PBAP",	PBAP_SVCLASS_ID,		add_pbap,	},
+/* TIBLUEZ 1.0 START */
+	{ "MAP_SMS_GSM",	MAP_SVCLASS_ID,		add_map_sms_gsm	},
+/* TIBLUEZ 1.0 END */
 
 	{ "NAP",	NAP_SVCLASS_ID,			add_nap		},
 	{ "GN",		GN_SVCLASS_ID,			add_gn		},
@@ -3752,6 +3846,63 @@ static void inquiry(handler_t handler, void *arg)
 static void doprintf(void *data, const char *str)
 {
 	printf("%s", str);
+}
+
+
+
+/*
+ * Search for a specific SDP service handle
+ */
+static int do_service_search(bdaddr_t *bdaddr, sdp_list_t *context_list)
+{
+	sdp_list_t  *search = NULL, *seq, *next;
+	char str[20];
+	sdp_session_t *sess;
+	struct search_context *context;
+
+	if (!bdaddr) {
+		inquiry(do_service_search, context_list);
+		return 0;
+	}
+
+	sess = sdp_connect(&interface, bdaddr, SDP_RETRY_IF_BUSY);
+	ba2str(bdaddr, str);
+	if (!sess) {
+		printf("Failed to connect to SDP server on %s: %s\n", str, strerror(errno));
+		return -1;
+	}
+
+
+
+	for (; context_list; context_list = next) {
+		context = (struct search_context*)context_list->data;
+		if (context->svc)
+			printf("Searching for %s on %s ...\n", context->svc, str);
+		else
+			printf("Browsing %s ...\n", str);
+		search = sdp_list_append(search, &context->group);
+
+		next = context_list->next;
+	}
+
+	if (sdp_service_search_req(sess,search,65535,&seq)) {
+		printf("Service Search failed: %s\n", strerror(errno));
+		sdp_close(sess);
+		return -1;
+	}
+
+	sdp_list_free(search, 0);
+
+	for (; seq; seq = next) {
+		uint32_t handle = *((uint32_t*)seq->data);
+
+		printf("Service handle: 0x%04x\n",handle);
+		next = seq->next;
+		free(seq);
+	}
+
+	sdp_close(sess);
+	return 0;
 }
 
 /*
@@ -4005,6 +4156,107 @@ static int cmd_search(int argc, char **argv)
 	return do_search(NULL, &context);
 }
 
+
+static struct option service_options[] = {
+	{ "help",	0, 0, 'h' },
+	{ "bdaddr",	1, 0, 'b' },
+	{ 0, 0, 0, 0}
+};
+
+static const char *service_help =
+	"Usage:\n"
+	"\tservice [--bdaddr bdaddr] SERVICE [ SERVICE...]\n"
+	"SERVICE is a name (string) or UUID (0x1002)\n";
+
+/*
+ * Search for a specific SDP service handle
+ *
+ */
+static int cmd_service(int argc, char **argv)
+{
+	unsigned char *uuid = NULL;
+	uint32_t class = 0;
+	bdaddr_t bdaddr;
+	int has_addr = 0;
+	int i,ret = 0;
+	int opt;
+	struct search_context *context;
+	sdp_list_t *context_list = NULL;
+
+
+	for_each_opt(opt, service_options, 0) {
+		switch (opt) {
+		case 'b':
+			estr2ba(optarg, &bdaddr);
+			has_addr = 1;
+			break;
+		default:
+			printf("%s", service_help);
+			return -1;
+		}
+	}
+
+	argc -= optind;
+	argv += optind;
+
+	if (argc < 1) {
+		printf("%s", service_help);
+		return -1;
+	}
+
+
+	for (i = 0 ; i < argc; i++) {
+		context = malloc(sizeof(struct search_context));
+		memset(context, '\0', sizeof(struct search_context));
+		context_list = sdp_list_append(context_list, context);
+
+		context->view = DEFAULT_VIEW;
+
+		context->svc = strdup(argv[i]);
+		if (!strncasecmp(context->svc, "0x", 2)) {
+			int num;
+			/* This is a UUID16, just convert to int */
+			sscanf(context->svc + 2, "%X", &num);
+			class = num;
+			printf("Class 0x%X\n", class);
+		} else {
+			/* Convert class name to an UUID */
+
+			for (i = 0; service[i].name; i++)
+				if (strcasecmp(context->svc, service[i].name) == 0) {
+					class = service[i].class;
+					uuid = service[i].uuid;
+					break;
+				}
+			if (!class && !uuid) {
+				printf("Unknown service %s\n", context->svc);
+				goto cleanup;
+			}
+		}
+
+		if (class) {
+			if (class & 0xffff0000)
+				sdp_uuid32_create(&context->group, class);
+			else {
+				uint16_t class16 = class & 0xffff;
+				sdp_uuid16_create(&context->group, class16);
+			}
+		} else
+			sdp_uuid128_create(&context->group, uuid);
+	}
+
+	if (has_addr)
+		ret = do_service_search(&bdaddr, context_list);
+	else
+		ret = do_service_search(NULL, context_list);
+cleanup:
+	if (context_list) {
+		sdp_list_free(context_list,free);
+	}
+	return ret;
+}
+
+
 /*
  * Show how to get a specific SDP record by its handle.
  * Not really useful to the user, just show how it can be done...
@@ -4123,10 +4375,9 @@ static int cmd_records(int argc, char **argv)
 			context.handle = base[i] + n;
 			err = get_service(&bdaddr, &context, 1);
 			if (err < 0)
-				goto done;
+				return 0;
 		}
 
-done:
 	return 0;
 }
 
@@ -4197,6 +4448,7 @@ static struct {
 	char *doc;
 } command[] = {
 	{ "search",  cmd_search,      "Search for a service"          },
+	{ "service", cmd_service,    "Search for a service handles"  },
 	{ "browse",  cmd_browse,      "Browse all available services" },
 	{ "records", cmd_records,     "Request all records"           },
 	{ "add",     cmd_add,         "Add local service"             },

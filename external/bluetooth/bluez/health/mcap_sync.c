@@ -5,11 +5,6 @@
  *  Copyright (C) 2010 GSyC/LibreSoft, Universidad Rey Juan Carlos.
  *  Copyright (C) 2010 Signove
  *
- *  Authors:
- *  Santiago Carot-Nemesio <sancane at gmail.com>
- *  Jose Antonio Santos-Cadenas <santoscadenas at gmail.com>
- *  Elvis Pfützenreuter <epx at signove.com>
- *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
  *  the Free Software Foundation; either version 2 of the License, or
@@ -26,21 +21,23 @@
  *
  */
 
-#include "btio.h"
+#ifdef HAVE_CONFIG_H
+#include <config.h>
+#endif
+
 #include <stdint.h>
 #include <netinet/in.h>
 #include <time.h>
 #include <stdlib.h>
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/l2cap.h>
-#include "../src/adapter.h"
-#include "../src/manager.h"
 #include <sys/ioctl.h>
 
-#include "config.h"
-#include "log.h"
-
 #include <bluetooth/bluetooth.h>
+#include <bluetooth/l2cap.h>
+#include <adapter.h>
+#include <manager.h>
+#include <btio.h>
+#include <log.h>
+
 #include "mcap.h"
 #include "mcap_lib.h"
 #include "mcap_internal.h"

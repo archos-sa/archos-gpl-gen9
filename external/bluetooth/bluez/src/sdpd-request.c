@@ -698,7 +698,7 @@ static int service_attr_req(sdp_req_t *req, sdp_buf_t *buf)
 	}
 
 	/*
-	 * Calculate Attribute size acording to MTU
+	 * Calculate Attribute size according to MTU
 	 * We can send only (MTU - sizeof(sdp_pdu_hdr_t) - sizeof(sdp_cont_state_t))
 	 */
 	max_rsp_size = MIN(max_rsp_size, req->mtu - sizeof(sdp_pdu_hdr_t) -
@@ -853,7 +853,7 @@ static int service_search_attr_req(sdp_req_t *req, sdp_buf_t *buf)
 	memset(tmpbuf.data, 0, USHRT_MAX);
 
 	/*
-	 * Calculate Attribute size acording to MTU
+	 * Calculate Attribute size according to MTU
 	 * We can send only (MTU - sizeof(sdp_pdu_hdr_t) - sizeof(sdp_cont_state_t))
 	 */
 	max = MIN(max, req->mtu - sizeof(sdp_pdu_hdr_t) - SDP_CONT_STATE_SIZE - sizeof(uint16_t));
@@ -1037,7 +1037,10 @@ send_rsp:
 	if (send(req->sock, rsp.data, rsp.data_size, 0) < 0)
 		error("send: %s (%d)", strerror(errno), errno);
 
-	SDPDBG("Bytes Sent : %d", sent);
+/* TIBLUEZ 1.0 START */
+	/* SDPDBG("Bytes Sent : %d", sent); */
+	SDPDBG("Bytes Sent : %d", rsp.data_size);
+/* TIBLUEZ 1.0 END */
 
 	free(rsp.data);
 	free(req->buf);

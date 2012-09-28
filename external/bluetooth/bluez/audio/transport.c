@@ -42,6 +42,7 @@
 #include "transport.h"
 #include "a2dp.h"
 #include "headset.h"
+#include "gateway.h"
 
 #ifndef DBUS_TYPE_UNIX_FD
 #define DBUS_TYPE_UNIX_FD -1
@@ -99,7 +100,6 @@ void media_transport_destroy(struct media_transport *transport)
 	char *path;
 
 	path = g_strdup(transport->path);
-
 	g_dbus_unregister_interface(transport->conn, path,
 						MEDIA_TRANSPORT_INTERFACE);
 
@@ -437,6 +437,116 @@ static void cancel_headset(struct media_transport *transport, guint id)
 	headset_cancel_stream(transport->device, id);
 }
 
+static void gateway_resume_complete(struct audio_device *dev, GError *err,
+							void *user_data)
+{
+	struct media_owner *owner = user_data;
+	struct media_request *req = owner->pending;
+	struct media_transport *transport = owner->transport;
+	int fd;
+	uint16_t imtu, omtu;
+	gboolean ret;
+
+	req->id = 0;
+
+	if (dev == NULL)
+		goto fail;
+
+	if (err) {
+		error("Failed to resume gateway: error %s", err->message);
+		goto fail;
+	}
+
+	fd = gateway_get_sco_fd(dev);
+	if (fd < 0)
+		goto fail;
+
+	imtu = 48;
+	omtu = 48;
+
+	media_transport_set_fd(transport, fd, imtu, omtu);
+
+	if (g_strstr_len(owner->accesstype, -1, "r") == NULL)
+		imtu = 0;
+
+	if (g_strstr_len(owner->accesstype, -1, "w") == NULL)
+		omtu = 0;
+
+	ret = g_dbus_send_reply(transport->conn, req->msg,
+						DBUS_TYPE_UNIX_FD, &fd,
+						DBUS_TYPE_UINT16, &imtu,
+						DBUS_TYPE_UINT16, &omtu,
+						DBUS_TYPE_INVALID);
+	if (ret == FALSE)
+		goto fail;
+
+	media_owner_remove(owner);
+
+	return;
+
+fail:
+	media_transport_remove(transport, owner);
+}
+
+static guint resume_gateway(struct media_transport *transport,
+				struct media_owner *owner)
+{
+	struct audio_device *device = transport->device;
+
+	if (transport->in_use == TRUE)
+		goto done;
+
+	transport->in_use = gateway_lock(device, GATEWAY_LOCK_READ |
+						GATEWAY_LOCK_WRITE);
+	if (transport->in_use == FALSE)
+		return 0;
+
+done:
+	return gateway_request_stream(device, gateway_resume_complete,
+					owner);
+}
+
+static gboolean gateway_suspend_complete(gpointer user_data)
+{
+	struct media_owner *owner = user_data;
+	struct media_transport *transport = owner->transport;
+	struct audio_device *device = transport->device;
+
+	/* Release always succeeds */
+	if (owner->pending) {
+		owner->pending->id = 0;
+		media_request_reply(owner->pending, transport->conn, 0);
+		media_owner_remove(owner);
+	}
+
+	gateway_unlock(device, GATEWAY_LOCK_READ | GATEWAY_LOCK_WRITE);
+	transport->in_use = FALSE;
+	media_transport_remove(transport, owner);
+	return FALSE;
+}
+
+static guint suspend_gateway(struct media_transport *transport,
+						struct media_owner *owner)
+{
+	struct audio_device *device = transport->device;
+	static int id = 1;
+
+	if (!owner) {
+		gateway_unlock(device, GATEWAY_LOCK_READ | GATEWAY_LOCK_WRITE);
+		transport->in_use = FALSE;
+		return 0;
+	}
+
+	gateway_suspend_stream(device);
+	g_idle_add(gateway_suspend_complete, owner);
+	return id++;
+}
+
+static void cancel_gateway(struct media_transport *transport, guint id)
+{
+	gateway_cancel_stream(transport->device, id);
+}
+
 static void media_owner_exit(DBusConnection *connection, void *user_data)
 {
 	struct media_owner *owner = user_data;
@@ -489,6 +599,9 @@ static void media_transport_add(struct media_transport *transport,
 	DBG("Transport %s Owner %s", transport->path, owner->name);
 	transport->owners = g_slist_append(transport->owners, owner);
 	owner->transport = transport;
+	owner->watch = g_dbus_add_disconnect_watch(transport->conn, owner->name,
+							media_owner_exit,
+							owner, NULL);
 }
 
 static struct media_owner *media_owner_create(DBusConnection *conn,
@@ -500,9 +613,6 @@ static struct media_owner *media_owner_create(DBusConnection *conn,
 	owner = g_new0(struct media_owner, 1);
 	owner->name = g_strdup(dbus_message_get_sender(msg));
 	owner->accesstype = g_strdup(accesstype);
-	owner->watch = g_dbus_add_disconnect_watch(conn, owner->name,
-							media_owner_exit,
-							owner, NULL);
 
 	DBG("Owner created: sender=%s accesstype=%s", owner->name,
 			accesstype);
@@ -561,6 +671,7 @@ static DBusMessage *acquire(DBusConnection *conn, DBusMessage *msg,
 	owner = media_owner_create(conn, msg, accesstype);
 	id = transport->resume(transport, owner);
 	if (id == 0) {
+		media_transport_release(transport, accesstype);
 		media_owner_free(owner);
 		return btd_error_not_authorized(msg);
 	}
@@ -673,6 +784,13 @@ static int set_property_headset(struct media_transport *transport,
 	return -EINVAL;
 }
 
+static int set_property_gateway(struct media_transport *transport,
+						const char *property,
+						DBusMessageIter *value)
+{
+	return -EINVAL;
+}
+
 static DBusMessage *set_property(DBusConnection *conn, DBusMessage *msg,
 								void *data)
 {
@@ -741,6 +859,12 @@ static void get_properties_headset(struct media_transport *transport,
 	dict_append_entry(dict, "Routing", DBUS_TYPE_STRING, &routing);
 }
 
+static void get_properties_gateway(struct media_transport *transport,
+						DBusMessageIter *dict)
+{
+	/* None */
+}
+
 void transport_get_properties(struct media_transport *transport,
 							DBusMessageIter *iter)
 {
@@ -792,7 +916,7 @@ static DBusMessage *get_properties(DBusConnection *conn, DBusMessage *msg,
 
 static GDBusMethodTable transport_methods[] = {
 	{ "GetProperties",	"",	"a{sv}",	get_properties },
-	{ "Acquire",		"s",	"h",		acquire,
+	{ "Acquire",		"s",	"hqq",		acquire,
 						G_DBUS_METHOD_FLAG_ASYNC},
 	{ "Release",		"s",	"",		release,
 						G_DBUS_METHOD_FLAG_ASYNC},
@@ -808,10 +932,13 @@ static GDBusSignalTable transport_signals[] = {
 static void media_transport_free(void *data)
 {
 	struct media_transport *transport = data;
-	GSList *l;
+	GSList *l = transport->owners;
 
-	for (l = transport->owners; l; l = l->next)
-		media_transport_remove(transport, l->data);
+	while (l) {
+		struct media_owner *owner = l->data;
+		l = l->next;
+		media_transport_remove(transport, owner);
+	}
 
 	g_slist_free(transport->owners);
 
@@ -879,6 +1006,13 @@ struct media_transport *media_transport_create(DBusConnection *conn,
 		transport->nrec_id = headset_add_nrec_cb(device,
 							headset_nrec_changed,
 							transport);
+	} else if (strcasecmp(uuid, HFP_HS_UUID) == 0 ||
+			strcasecmp(uuid, HSP_HS_UUID) == 0) {
+		transport->resume = resume_gateway;
+		transport->suspend = suspend_gateway;
+		transport->cancel = cancel_gateway;
+		transport->get_properties = get_properties_gateway;
+		transport->set_property = set_property_gateway;
 	} else
 		goto fail;
 
@@ -914,4 +1048,9 @@ void media_transport_update_delay(struct media_transport *transport,
 	emit_property_changed(transport->conn, transport->path,
 				MEDIA_TRANSPORT_INTERFACE, "Delay",
 				DBUS_TYPE_UINT16, &transport->delay);
+}
+
+struct audio_device *media_transport_get_dev(struct media_transport *transport)
+{
+	return transport->device;
 }

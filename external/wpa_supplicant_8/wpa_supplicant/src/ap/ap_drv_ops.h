@@ -21,6 +21,13 @@ struct wpa_driver_scan_params;
 struct ieee80211_ht_capabilities;
 
 u32 hostapd_sta_flags_to_drv(u32 flags);
+int hostapd_build_ap_extra_ies(struct hostapd_data *hapd,
+			       struct wpabuf **beacon,
+			       struct wpabuf **proberesp,
+			       struct wpabuf **assocresp);
+void hostapd_free_ap_extra_ies(struct hostapd_data *hapd, struct wpabuf *beacon,
+			       struct wpabuf *proberesp,
+			       struct wpabuf *assocresp);
 int hostapd_set_ap_wps_ie(struct hostapd_data *hapd);
 int hostapd_set_authorized(struct hostapd_data *hapd,
 			   struct sta_info *sta, int authorized);
@@ -164,16 +171,12 @@ static inline int hostapd_drv_sta_clear_stats(struct hostapd_data *hapd,
 	return hapd->driver->sta_clear_stats(hapd->drv_priv, addr);
 }
 
-static inline int hostapd_drv_set_beacon(struct hostapd_data *hapd,
-					 const u8 *head, size_t head_len,
-					 const u8 *tail, size_t tail_len,
-					 int dtim_period, int beacon_int)
+static inline int hostapd_drv_set_ap(struct hostapd_data *hapd,
+				     struct wpa_driver_ap_params *params)
 {
-	if (hapd->driver == NULL || hapd->driver->set_beacon == NULL)
+	if (hapd->driver == NULL || hapd->driver->set_ap == NULL)
 		return 0;
-	return hapd->driver->set_beacon(hapd->drv_priv,
-					head, head_len, tail, tail_len,
-					dtim_period, beacon_int);
+	return hapd->driver->set_ap(hapd->drv_priv, params);
 }
 
 static inline int hostapd_drv_set_radius_acl_auth(struct hostapd_data *hapd,

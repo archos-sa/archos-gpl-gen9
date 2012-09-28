@@ -33,11 +33,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <sys/types.h>
-#include <netinet/in.h>
-
-#include "parser.h"
-#include "rfcomm.h"
+#include "parser/parser.h"
+#include "parser/rfcomm.h"
 
 struct parser_t parser;
 

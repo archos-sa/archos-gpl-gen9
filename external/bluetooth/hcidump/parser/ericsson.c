@@ -28,7 +28,7 @@
 #include <stdio.h>
 #include <errno.h>
 
-#include "parser.h"
+#include "parser/parser.h"
 
 void ericsson_dump(int level, struct frame *frm)
 {

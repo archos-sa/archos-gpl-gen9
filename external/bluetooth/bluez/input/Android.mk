@@ -1,4 +1,5 @@
 LOCAL_PATH:= $(call my-dir)
+TIBLUEZVER := $(shell cat $(LOCAL_PATH)/../ti_bluez_version;)
 
 # HID plugin
 
@@ -9,10 +10,13 @@ LOCAL_SRC_FILES:= \
 	fakehid.c \
 	main.c \
 	manager.c \
-	server.c
+	server.c \
+	hog_manager.c \
+	hog_device.c
 
 LOCAL_CFLAGS:= \
-	-DVERSION=\"4.93\" \
+        -Wno-missing-field-initializers \
+	-DVERSION=\"$(TIBLUEZVER)\" \
 	-DSTORAGEDIR=\"/data/misc/bluetoothd\" \
 	-DCONFIGDIR=\"/etc/bluetooth\"
 
@@ -21,7 +25,9 @@ LOCAL_C_INCLUDES:= \
 	$(LOCAL_PATH)/../lib \
 	$(LOCAL_PATH)/../src \
 	$(LOCAL_PATH)/../gdbus \
+	$(LOCAL_PATH)/../attrib \
 	$(call include-path-for, glib) \
+	$(call include-path-for, glib)/glib \
 	$(call include-path-for, dbus)
 
 LOCAL_SHARED_LIBRARIES := \
@@ -32,6 +38,7 @@ LOCAL_SHARED_LIBRARIES := \
 	libdbus \
 	libexpat \
 	libglib 
+
 
 LOCAL_MODULE_PATH := $(TARGET_OUT_SHARED_LIBRARIES)/bluez-plugin
 LOCAL_UNSTRIPPED_PATH := $(TARGET_OUT_SHARED_LIBRARIES_UNSTRIPPED)/bluez-plugin

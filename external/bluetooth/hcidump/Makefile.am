@@ -1,10 +1,14 @@
 
 AM_MAKEFLAGS = --no-print-directory
 
+library_sources = lib/bluetooth.h lib/bluetooth.c \
+			lib/hci_lib.h lib/hci.h lib/hci.c lib/l2cap.h lib/a2mp.h
+
 parser_sources =  parser/parser.h parser/parser.c \
 					parser/lmp.c \
 					parser/hci.c \
 					parser/l2cap.c \
+					parser/smp.c \
 					parser/att.c \
 					parser/sdp.h parser/sdp.c \
 					parser/rfcomm.h parser/rfcomm.c \
@@ -14,6 +18,8 @@ parser_sources =  parser/parser.h parser/parser.c \
 					parser/hcrp.c \
 					parser/avdtp.c \
 					parser/avctp.c \
+					parser/avrcp.c \
+					parser/sap.c \
 					parser/obex.c \
 					parser/capi.c \
 					parser/ppp.c \
@@ -25,20 +31,15 @@ parser_sources =  parser/parser.h parser/parser.c \
 
 sbin_PROGRAMS = src/hcidump
 
-src_hcidump_SOURCES = src/hcidump.c $(parser_sources)
-src_hcidump_LDADD = @BLUEZ_LIBS@
+src_hcidump_SOURCES = src/hcidump.c $(library_sources) $(parser_sources)
 
 
 noinst_PROGRAMS = src/bpasniff src/csrsniff
 
-src_bpasniff_SOURCES = src/bpasniff.c $(parser_sources)
-src_bpasniff_LDADD = @BLUEZ_LIBS@
+src_bpasniff_SOURCES = src/bpasniff.c $(library_sources) $(parser_sources)
 
-src_csrsniff_SOURCES = src/csrsniff.c $(parser_sources)
-src_csrsniff_LDADD = @BLUEZ_LIBS@
+src_csrsniff_SOURCES = src/csrsniff.c $(library_sources) $(parser_sources)
 
-
-AM_CFLAGS = @BLUEZ_CFLAGS@
 
 dist_man_MANS = src/hcidump.8
 

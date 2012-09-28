@@ -36,7 +36,10 @@ LOCAL_SRC_FILES:= \
 	gqsort.c \
 	gstdio.c \
 	gqueue.c \
-
+	gshell.c \
+	gmarkup.c
+	
+	
 LOCAL_C_INCLUDES:= \
 	$(LOCAL_PATH)/../ \
 	$(LOCAL_PATH)
@@ -45,5 +48,6 @@ LOCAL_CFLAGS:= \
 	-DANDROID_STUB
 
 LOCAL_MODULE:=libglib
+LOCAL_MODULE_TAGS:=optional
 
 include $(BUILD_SHARED_LIBRARY)

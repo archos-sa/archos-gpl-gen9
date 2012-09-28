@@ -52,7 +52,7 @@
 #include "manager.h"
 #include "control.h"
 #include "avdtp.h"
-#include "glib-helper.h"
+#include "glib-compat.h"
 #include "btio.h"
 #include "sink.h"
 #include "source.h"
@@ -60,6 +60,10 @@
 #define AVDTP_PSM 25
 
 #define MAX_SEID 0x3E
+
+#ifndef MAX
+# define MAX(x, y) ((x) > (y) ? (x) : (y))
+#endif
 
 #define AVDTP_DISCOVER				0x01
 #define AVDTP_GET_CAPABILITIES			0x02
@@ -239,8 +243,6 @@ struct reconf_req {
 	uint8_t rfa0:2;
 	uint8_t acp_seid:6;
 
-	uint8_t serv_cap;
-	uint8_t serv_cap_len;
 
 	uint8_t caps[0];
 } __attribute__ ((packed));
@@ -277,8 +279,6 @@ struct reconf_req {
 	uint8_t acp_seid:6;
 	uint8_t rfa0:2;
 
-	uint8_t serv_cap;
-	uint8_t serv_cap_len;
 
 	uint8_t caps[0];
 } __attribute__ ((packed));
@@ -484,6 +484,55 @@ static const char *avdtp_statestr(avdtp_state_t state)
 	}
 }
 
+
+static char* avdtp_signalstr(uint8_t signal_id) {   
+    switch(signal_id) {
+        case AVDTP_DISCOVER:
+            return "AVDTP_DISCOVER";
+        case AVDTP_GET_CAPABILITIES:
+            return "AVDTP_GET_CAPABILITIES";
+        case AVDTP_SET_CONFIGURATION:
+            return "AVDTP_SET_CONFIGURATION";
+        case AVDTP_GET_CONFIGURATION:
+            return "AVDTP_GET_CONFIGURATION";
+        case AVDTP_RECONFIGURE:
+            return "AVDTP_RECONFIGURE";
+        case AVDTP_OPEN:
+            return "AVDTP_OPEN";
+        case AVDTP_START:
+            return "AVDTP_START";
+        case AVDTP_CLOSE:
+            return "AVDTP_CLOSE";
+        case AVDTP_SUSPEND:
+            return "AVDTP_SUSPEND";
+        case AVDTP_ABORT:
+            return "AVDTP_ABORT";
+        case AVDTP_SECURITY_CONTROL:
+            return "AVDTP_SECURITY_CONTROL";
+        case AVDTP_GET_ALL_CAPABILITIES:
+            return "AVDTP_GET_ALL_CAPABILITIES";
+        case AVDTP_DELAY_REPORT:
+            return "AVDTP_DELAY_REPORT";
+    }
+    return "Unknown avdtp signal id";
+}
+
+
+
+static char* avdtp_msgtypestr(uint8_t msgtype) {
+    switch(msgtype) {
+        case AVDTP_MSG_TYPE_COMMAND:
+            return "AVDTP_MSG_TYPE_COMMAND";
+        case AVDTP_MSG_TYPE_GEN_REJECT:
+            return "AVDTP_MSG_TYPE_GEN_REJECT";
+        case AVDTP_MSG_TYPE_ACCEPT:
+            return "AVDTP_MSG_TYPE_ACCEPT";
+        case AVDTP_MSG_TYPE_REJECT:
+            return "AVDTP_MSG_TYPE_REJECT";
+    }
+    return "Unknown msg type";
+}
+
 static gboolean try_send(int sk, void *data, size_t len)
 {
 	int err;
@@ -504,7 +553,8 @@ static gboolean try_send(int sk, void *data, size_t len)
 	return TRUE;
 }
 
-static gboolean avdtp_send(struct avdtp *session, uint8_t transaction,
+
+static gboolean _avdtp_send(struct avdtp *session, uint8_t transaction,
 				uint8_t message_type, uint8_t signal_id,
 				void *data, size_t len)
 {
@@ -528,9 +578,10 @@ static gboolean avdtp_send(struct avdtp *session, uint8_t transaction,
 
 		single.transaction = transaction;
 		single.packet_type = AVDTP_PKT_TYPE_SINGLE;
-		single.message_type = message_type;
-		single.signal_id = signal_id;
-
+		if (message_type != AVDTP_MSG_TYPE_GEN_REJECT) {
+		    single.message_type = message_type;
+		    single.signal_id = signal_id;
+		}
 		memcpy(session->buf, &single, sizeof(single));
 		memcpy(session->buf + sizeof(single), data, len);
 
@@ -587,7 +638,7 @@ static gboolean avdtp_send(struct avdtp *session, uint8_t transaction,
 		cont.message_type = message_type;
 
 		memcpy(session->buf, &cont, sizeof(cont));
-		memcpy(session->buf + sizeof(cont), data + sent, to_copy);
+		memcpy(session->buf + sizeof(cont), (char *)data + sent, to_copy);
 
 		if (!try_send(sock, session->buf, to_copy + sizeof(cont)))
 			return FALSE;
@@ -597,6 +648,22 @@ static gboolean avdtp_send(struct avdtp *session, uint8_t transaction,
 
 	return TRUE;
 }
+
+
+static gboolean avdtp_send(struct avdtp *session, uint8_t transaction,
+				uint8_t message_type, uint8_t signal_id,
+				void *data, size_t len) {
+    gboolean ret = _avdtp_send(session,transaction,message_type,signal_id,data,len);
+
+    if (ret == TRUE) {
+        DBG("send-success: trans=%d, msgtype=%s, signal-id=%s",transaction,avdtp_msgtypestr(message_type),avdtp_signalstr(signal_id));
+    } else {
+        DBG("send-failed : trans=%d, msgtype=%s, signal-id=%s",transaction,avdtp_msgtypestr(message_type),avdtp_signalstr(signal_id));
+    }
+    
+    return ret;
+}
+
 
 static void pending_req_free(struct pending_req *req)
 {
@@ -794,11 +861,8 @@ static void stream_free(struct avdtp_stream *stream)
 	if (stream->io_id)
 		g_source_remove(stream->io_id);
 
-	g_slist_foreach(stream->callbacks, (GFunc) g_free, NULL);
-	g_slist_free(stream->callbacks);
-
-	g_slist_foreach(stream->caps, (GFunc) g_free, NULL);
-	g_slist_free(stream->caps);
+	g_slist_free_full(stream->callbacks, g_free);
+	g_slist_free_full(stream->caps, g_free);
 
 	g_free(stream);
 }
@@ -1084,7 +1148,6 @@ static void avdtp_sep_set_state(struct avdtp *session,
 			g_source_remove(stream->idle_timer);
 			stream->idle_timer = 0;
 		}
-		session->streams = g_slist_remove(session->streams, stream);
 		if (session->pending_open == stream)
 			handle_transport_connect(session, NULL, 0, 0);
 		if (session->req && session->req->stream == stream)
@@ -1096,13 +1159,18 @@ static void avdtp_sep_set_state(struct avdtp *session,
 		break;
 	}
 
-	for (l = stream->callbacks; l != NULL; l = g_slist_next(l)) {
+	l = stream->callbacks;
+	while (l != NULL) {
 		struct stream_callback *cb = l->data;
+		l = g_slist_next(l);
 		cb->cb(stream, old_state, state, err_ptr, cb->user_data);
 	}
 
-	if (state == AVDTP_STATE_IDLE)
+	if (state == AVDTP_STATE_IDLE &&
+				g_slist_find(session->streams, stream)) {
+		session->streams = g_slist_remove(session->streams, stream);
 		stream_free(stream);
+	}
 }
 
 static void finalize_discovery(struct avdtp *session, int err)
@@ -1134,19 +1202,29 @@ static void release_stream(struct avdtp_stream *stream, struct avdtp *session)
 	avdtp_sep_set_state(session, sep, AVDTP_STATE_IDLE);
 }
 
+static int avdtp_cancel_authorization(struct avdtp *session)
+{
+	struct audio_device *dev;
+
+	if (session->state != AVDTP_SESSION_STATE_CONNECTING)
+		return 0;
+
+	dev = manager_get_device(&session->server->src, &session->dst, FALSE);
+	if (dev == NULL)
+		return -ENODEV;
+
+	return audio_device_cancel_authorization(dev, auth_cb, session);
+}
+
 static void connection_lost(struct avdtp *session, int err)
 {
 	char address[18];
-	struct audio_device *dev;
 
 	ba2str(&session->dst, address);
 	DBG("Disconnected from %s", address);
 
-	dev = manager_get_device(&session->server->src, &session->dst, FALSE);
-
-	if (dev != NULL && session->state == AVDTP_SESSION_STATE_CONNECTING &&
-								err != EACCES)
-		audio_device_cancel_authorization(dev, auth_cb, session);
+	if (err != EACCES)
+		avdtp_cancel_authorization(session);
 
 	session->free_lock = 1;
 
@@ -1195,11 +1273,7 @@ void avdtp_unref(struct avdtp *session)
 	if (session->ref == 1) {
 		if (session->state == AVDTP_SESSION_STATE_CONNECTING &&
 								session->io) {
-			struct audio_device *dev;
-			dev = manager_get_device(&session->server->src,
-							&session->dst, FALSE);
-			audio_device_cancel_authorization(dev, auth_cb,
-								session);
+			avdtp_cancel_authorization(session);
 			g_io_channel_shutdown(session->io, TRUE, NULL);
 			g_io_channel_unref(session->io);
 			session->io = NULL;
@@ -1229,8 +1303,7 @@ void avdtp_unref(struct avdtp *session)
 	if (session->req)
 		pending_req_free(session->req);
 
-	g_slist_foreach(session->seps, (GFunc) g_free, NULL);
-	g_slist_free(session->seps);
+	g_slist_free_full(session->seps, g_free);
 
 	g_free(session->buf);
 
@@ -2128,7 +2201,7 @@ static gboolean session_cb(GIOChannel *chan, GIOCondition cond,
 	}
 
 	if ((size_t) size < sizeof(struct avdtp_common_header)) {
-		error("Received too small packet (%zu bytes)", size);
+		error("Received too small packet (%zu bytes)", (size_t)size);
 		goto failed;
 	}
 
@@ -2170,7 +2243,7 @@ static gboolean session_cb(GIOChannel *chan, GIOCondition cond,
 	}
 
 	if (session->in.signal_id != session->req->signal_id) {
-		error("Reponse signal doesn't match");
+		error("Response signal doesn't match");
 		return TRUE;
 	}
 
@@ -2245,22 +2318,22 @@ static uint16_t get_version(struct avdtp *session)
 
 	adapter = manager_find_adapter(&session->server->src);
 	if (!adapter)
-		goto done;
+		return ver;
 
 	ba2str(&session->dst, addr);
 	device = adapter_find_device(adapter, addr);
 	if (!device)
-		goto done;
+		return ver;
 
 	rec = btd_device_get_record(device, A2DP_SINK_UUID);
 	if (!rec)
 		rec = btd_device_get_record(device, A2DP_SOURCE_UUID);
 
 	if (!rec)
-		goto done;
+		return ver;
 
 	if (sdp_get_access_protos(rec, &protos) < 0)
-		goto done;
+		return ver;
 
 	proto_desc = sdp_get_proto_desc(protos, AVDTP_UUID);
 	if (proto_desc && proto_desc->dtd == SDP_UINT16)
@@ -2269,7 +2342,6 @@ static uint16_t get_version(struct avdtp *session)
 	sdp_list_foreach(protos, (sdp_list_func_t) sdp_list_free, NULL);
 	sdp_list_free(protos, NULL);
 
-done:
 	return ver;
 }
 
@@ -2354,7 +2426,7 @@ static void avdtp_connect_cb(GIOChannel *chan, GError *err, gpointer user_data)
 	if (session->state == AVDTP_SESSION_STATE_CONNECTING) {
 		DBG("AVDTP imtu=%u, omtu=%u", session->imtu, session->omtu);
 
-		session->buf = g_malloc0(session->imtu);
+		session->buf = g_malloc0(MAX(session->imtu, session->omtu));
 		avdtp_set_state(session, AVDTP_SESSION_STATE_CONNECTED);
 
 		if (session->io_id)
@@ -2493,6 +2565,7 @@ static void avdtp_confirm_cb(GIOChannel *chan, gpointer data)
 	perr = audio_device_request_authorization(dev, ADVANCED_AUDIO_UUID,
 							auth_cb, session);
 	if (perr < 0) {
+		avdtp_set_state(session, AVDTP_SESSION_STATE_DISCONNECTED);
 		avdtp_unref(session);
 		goto drop;
 	}
@@ -2515,6 +2588,7 @@ static GIOChannel *l2cap_connect(struct avdtp *session)
 				BT_IO_OPT_SOURCE_BDADDR, &session->server->src,
 				BT_IO_OPT_DEST_BDADDR, &session->dst,
 				BT_IO_OPT_PSM, AVDTP_PSM,
+				BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_MEDIUM,
 				BT_IO_OPT_INVALID);
 	if (!io) {
 		error("%s", err->message);
@@ -2725,6 +2799,8 @@ static gboolean avdtp_discover_resp(struct avdtp *session,
 {
 	int sep_count, i;
 	uint8_t getcap_cmd;
+	int ret = 0;
+	gboolean getcap_pending = FALSE;
 
 	if (session->version >= 0x0103 && session->server->version >= 0x0103)
 		getcap_cmd = AVDTP_GET_ALL_CAPABILITIES;
@@ -2737,7 +2813,6 @@ static gboolean avdtp_discover_resp(struct avdtp *session,
 		struct avdtp_remote_sep *sep;
 		struct avdtp_stream *stream;
 		struct seid_req req;
-		int ret;
 
 		DBG("seid %d type %d media %d in use %d",
 				resp->seps[i].seid, resp->seps[i].type,
@@ -2763,11 +2838,13 @@ static gboolean avdtp_discover_resp(struct avdtp *session,
 
 		ret = send_request(session, TRUE, NULL, getcap_cmd,
 							&req, sizeof(req));
-		if (ret < 0) {
-			finalize_discovery(session, -ret);
+		if (ret < 0)
 			break;
-		}
+		getcap_pending = TRUE;
 	}
+
+	if (!getcap_pending)
+		finalize_discovery(session, -ret);
 
 	return TRUE;
 }
@@ -2799,8 +2876,7 @@ static gboolean avdtp_get_capabilities_resp(struct avdtp *session,
 					sep->type, sep->media_type);
 
 	if (sep->caps) {
-		g_slist_foreach(sep->caps, (GFunc) g_free, NULL);
-		g_slist_free(sep->caps);
+		g_slist_free_full(sep->caps, g_free);
 		sep->caps = NULL;
 		sep->codec = NULL;
 		sep->delay_reporting = FALSE;
@@ -3175,14 +3251,34 @@ struct avdtp_service_capability *avdtp_stream_get_codec(
 	return NULL;
 }
 
+void print_caps( struct avdtp_service_capability *cap , char* buff )
+{
+	int ind = 0;
+	int sz;
+
+	ind = sprintf(buff,"cat: %d, size: %d, data: ",cap->category, cap->length);
+	sz = cap->length;
+	while (sz) {
+		ind += sprintf(buff+ind,"0x%x ",cap->data[cap->length-sz]);
+		sz--;
+	}
+	buff[ind] = 0;
+}
+
 gboolean avdtp_stream_has_capability(struct avdtp_stream *stream,
 				struct avdtp_service_capability *cap)
 {
 	GSList *l;
 	struct avdtp_service_capability *stream_cap;
+	char buff1[256];
+	char buff2[256];
 
 	for (l = stream->caps; l; l = g_slist_next(l)) {
 		stream_cap = l->data;
+		print_caps(stream_cap,&buff1);
+		print_caps(cap,&buff2);
+
+		error(">>>>>stream_cap: %s\n>>>>>cap: %s",buff1,buff2);
 
 		if (stream_cap->category != cap->category ||
 			stream_cap->length != cap->length)
@@ -3388,7 +3484,7 @@ unsigned int avdtp_stream_add_cb(struct avdtp *session,
 	stream_cb->user_data = data;
 	stream_cb->id = ++id;
 
-	stream->callbacks = g_slist_append(stream->callbacks, stream_cb);;
+	stream->callbacks = g_slist_append(stream->callbacks, stream_cb);
 
 	return stream_cb->id;
 }
@@ -3407,7 +3503,7 @@ int avdtp_get_configuration(struct avdtp *session, struct avdtp_stream *stream)
 							&req, sizeof(req));
 }
 
-static void copy_capabilities(gpointer data, gpointer user_data)
+void copy_capabilities(gpointer data, gpointer user_data)
 {
 	struct avdtp_service_capability *src_cap = data;
 	struct avdtp_service_capability *dst_cap;
@@ -3494,8 +3590,7 @@ int avdtp_set_configuration(struct avdtp *session,
 	return err;
 }
 
-int avdtp_reconfigure(struct avdtp *session, GSList *caps,
-			struct avdtp_stream *stream)
+int avdtp_reconfigure(struct avdtp *session, GSList *caps, struct avdtp_stream *stream)
 {
 	struct reconf_req *req;
 	unsigned char *ptr;
@@ -3512,7 +3607,9 @@ int avdtp_reconfigure(struct avdtp *session, GSList *caps,
 	/* Calculate total size of request */
 	for (l = caps, caps_len = 0; l != NULL; l = g_slist_next(l)) {
 		cap = l->data;
-		caps_len += cap->length + 2;
+		if (cap->category == 7) {
+		    caps_len += cap->length + 2;
+		}
 	}
 
 	req = g_malloc0(sizeof(struct reconf_req) + caps_len);
@@ -3522,8 +3619,11 @@ int avdtp_reconfigure(struct avdtp *session, GSList *caps,
 	/* Copy the capabilities into the request */
 	for (l = caps, ptr = req->caps; l != NULL; l = g_slist_next(l)) {
 		cap = l->data;
-		memcpy(ptr, cap, cap->length + 2);
-		ptr += cap->length + 2;
+    	if (cap->category == 7) {
+    		DBG("cap category:%d added",cap->category);
+		    memcpy(ptr, cap, cap->length + 2);
+		    ptr += cap->length + 2;
+    	}
 	}
 
 	err = send_request(session, FALSE, stream, AVDTP_RECONFIGURE, req,
@@ -3532,6 +3632,7 @@ int avdtp_reconfigure(struct avdtp *session, GSList *caps,
 
 	return err;
 }
+
 
 int avdtp_open(struct avdtp *session, struct avdtp_stream *stream)
 {
@@ -3769,7 +3870,7 @@ const char *avdtp_strerror(struct avdtp_error *err)
 	case AVDTP_BAD_HEADER_FORMAT:
 		return "Bad Header Format";
 	case AVDTP_BAD_LENGTH:
-		return "Bad Packet Lenght";
+		return "Bad Packet Length";
 	case AVDTP_BAD_ACP_SEID:
 		return "Bad Acceptor SEID";
 	case AVDTP_SEP_IN_USE:
@@ -3878,9 +3979,15 @@ void avdtp_exit(const bdaddr_t *src)
 	if (!server)
 		return;
 
-	for (l = server->sessions; l; l = l->next) {
+	l = server->sessions;
+	while (l) {
 		struct avdtp *session = l->data;
 
+		l = l->next;
+		/* value of l pointer should be updated before invoking
+		 * connection_lost since it internally uses avdtp_unref
+		 * which operates on server->session list as well
+		 */
 		connection_lost(session, -ECONNABORTED);
 	}
 
@@ -3921,7 +4028,7 @@ unsigned int avdtp_add_state_cb(avdtp_session_state_cb cb, void *user_data)
 	state_cb->user_data = user_data;
 	state_cb->id = ++id;
 
-	avdtp_callbacks = g_slist_append(avdtp_callbacks, state_cb);;
+	avdtp_callbacks = g_slist_append(avdtp_callbacks, state_cb);
 
 	return state_cb->id;
 }

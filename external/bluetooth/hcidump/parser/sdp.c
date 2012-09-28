@@ -33,11 +33,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <sys/types.h>
-#include <netinet/in.h>
-
-#include "parser.h"
-#include "sdp.h"
+#include "parser/parser.h"
+#include "parser/sdp.h"
 
 #define SDP_ERROR_RSP                                  0x01
 #define SDP_SERVICE_SEARCH_REQ                         0x02

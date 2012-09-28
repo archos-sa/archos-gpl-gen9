@@ -296,7 +296,7 @@ static void select_complete(struct avdtp *session, struct a2dp_sep *sep,
 	if (caps == NULL)
 		goto failed;
 
-	id = a2dp_config(session, sep, stream_setup_complete, caps, source);
+	id = a2dp_config(session, sep, stream_setup_complete, caps, source, 0);
 	if (id == 0)
 		goto failed;
 
@@ -564,11 +564,11 @@ gboolean source_is_active(struct audio_device *dev)
 	return FALSE;
 }
 
-avdtp_state_t source_get_state(struct audio_device *dev)
+source_state_t source_get_state(struct audio_device *dev)
 {
 	struct source *source = dev->source;
 
-	return source->stream_state;
+	return source->state;
 }
 
 gboolean source_new_stream(struct audio_device *dev, struct avdtp *session,

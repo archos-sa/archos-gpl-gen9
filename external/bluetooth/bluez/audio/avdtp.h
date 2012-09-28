@@ -215,6 +215,8 @@ typedef void (*avdtp_discover_cb_t) (struct avdtp *session, GSList *seps,
 
 struct avdtp *avdtp_get(bdaddr_t *src, bdaddr_t *dst);
 
+void copy_capabilities(gpointer data, gpointer user_data);
+
 void avdtp_unref(struct avdtp *session);
 struct avdtp *avdtp_ref(struct avdtp *session);
 

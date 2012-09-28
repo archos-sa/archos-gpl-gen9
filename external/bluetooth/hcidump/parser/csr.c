@@ -31,10 +31,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <sys/types.h>
-#include <netinet/in.h>
-
-#include "parser.h"
+#include "parser/parser.h"
 
 #define CSR_U8(frm)  (get_u8(frm))
 #define CSR_U16(frm) (btohs(htons(get_u16(frm))))

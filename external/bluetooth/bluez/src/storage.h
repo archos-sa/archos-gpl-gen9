@@ -40,19 +40,20 @@ int write_remote_class(bdaddr_t *local, bdaddr_t *peer, uint32_t class);
 int read_remote_class(bdaddr_t *local, bdaddr_t *peer, uint32_t *class);
 int write_device_name(bdaddr_t *local, bdaddr_t *peer, char *name);
 int read_device_name(const char *src, const char *dst, char *name);
-int write_remote_eir(bdaddr_t *local, bdaddr_t *peer, uint8_t *data);
+int write_remote_eir(bdaddr_t *local, bdaddr_t *peer, uint8_t *data,
+							uint8_t data_len);
 int read_remote_eir(bdaddr_t *local, bdaddr_t *peer, uint8_t *data);
 int write_version_info(bdaddr_t *local, bdaddr_t *peer, uint16_t manufacturer, uint8_t lmp_ver, uint16_t lmp_subver);
 int write_features_info(bdaddr_t *local, bdaddr_t *peer, unsigned char *page1, unsigned char *page2);
 int read_remote_features(bdaddr_t *local, bdaddr_t *peer, unsigned char *page1, unsigned char *page2);
-int write_lastseen_info(bdaddr_t *local, bdaddr_t *peer, struct tm *tm);
+int write_lastseen_info(bdaddr_t *local, bdaddr_t *peer, uint8_t addr_type, struct tm *tm);
+int read_lastseen_info(bdaddr_t *local, bdaddr_t *peer, uint8_t *addr_type, struct tm *tm);
 int write_lastused_info(bdaddr_t *local, bdaddr_t *peer, struct tm *tm);
 int write_link_key(bdaddr_t *local, bdaddr_t *peer, unsigned char *key, uint8_t type, int length);
 int read_link_key(bdaddr_t *local, bdaddr_t *peer, unsigned char *key, uint8_t *type);
-int read_pin_code(bdaddr_t *local, bdaddr_t *peer, char *pin);
+ssize_t read_pin_code(bdaddr_t *local, bdaddr_t *peer, char *pin);
 gboolean read_trust(const bdaddr_t *local, const char *addr, const char *service);
 int write_trust(const char *src, const char *addr, const char *service, gboolean trust);
-GSList *list_trusts(bdaddr_t *local, const char *service);
 int write_device_profiles(bdaddr_t *src, bdaddr_t *dst, const char *profiles);
 int delete_entry(bdaddr_t *src, const char *storage, const char *key);
 int store_record(const gchar *src, const gchar *dst, sdp_record_t *rec);
@@ -84,9 +85,21 @@ char *read_device_characteristics(const bdaddr_t *sba, const bdaddr_t *dba,
 int write_device_attribute(const bdaddr_t *sba, const bdaddr_t *dba,
                                         uint16_t handle, const char *chars);
 int read_device_attributes(const bdaddr_t *sba, textfile_cb func, void *data);
-int write_device_type(const bdaddr_t *sba, const bdaddr_t *dba,
-						device_type_t type);
-device_type_t read_device_type(const bdaddr_t *sba, const bdaddr_t *dba);
+int read_device_ccc(bdaddr_t *local, bdaddr_t *peer, uint16_t handle,
+							uint16_t *value);
+int write_device_ccc(bdaddr_t *local, bdaddr_t *peer, uint16_t handle,
+							uint16_t value);
+void delete_device_ccc(bdaddr_t *local, bdaddr_t *peer);
+GSList *devices_to_notify(bdaddr_t *local, uint16_t ccc_hnd, uint16_t ccc_bits);
+int write_longtermkeys(bdaddr_t *local, bdaddr_t *peer, const char *key);
+gboolean has_longtermkeys(bdaddr_t *local, bdaddr_t *peer);
+bool is_service_changed_pending(bdaddr_t *local, bdaddr_t *peer);
+int set_service_changed_pending(bdaddr_t *local, bdaddr_t *peer);
+int unset_service_changed_pending(bdaddr_t *local, bdaddr_t *peer);
+
+int write_device_addr_type(bdaddr_t *local, bdaddr_t *peer, uint8_t addr_type);
+int delete_device_address_type(const bdaddr_t *sba, const bdaddr_t *dba);
+int read_device_addr_type(bdaddr_t *local, bdaddr_t *peer, uint8_t *addr_type);
 
 #define PNP_UUID		"00001200-0000-1000-8000-00805f9b34fb"
 

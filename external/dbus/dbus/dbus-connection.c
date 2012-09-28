@@ -303,6 +303,25 @@ struct DBusConnection
   dbus_bool_t dispatch_acquired; /**< Someone has dispatch path (can drain incoming queue) */
   dbus_bool_t io_path_acquired;  /**< Someone has transport io path (can use the transport to read/write messages) */
   
+#ifdef BLUETI_ENHANCEMENT
+  unsigned int shareable; /**< #TRUE if libdbus owns a reference to the connection and can return it from dbus_connection_open() more than once */
+  
+  unsigned int exit_on_disconnect; /**< If #TRUE, exit after handling disconnect signal */
+
+  unsigned int route_peer_messages; /**< If #TRUE, if org.freedesktop.DBus.Peer messages have a bus name, don't handle them automatically */
+
+  unsigned int disconnected_message_arrived;   /**< We popped or are dispatching the disconnected message.
+                                                    * if the disconnect_message_link is NULL then we queued it, but
+                                                    * this flag is whether it got to the head of the queue.
+                                                    */
+  unsigned int disconnected_message_processed; /**< We did our default handling of the disconnected message,
+                                                    * such as closing the connection.
+                                                    */
+#ifndef DBUS_DISABLE_CHECKS
+  unsigned int have_connection_lock; /**< Used to check locking */
+#endif
+
+#else /*BLUETI_ENHANCEMENT*/
   unsigned int shareable : 1; /**< #TRUE if libdbus owns a reference to the connection and can return it from dbus_connection_open() more than once */
   
   unsigned int exit_on_disconnect : 1; /**< If #TRUE, exit after handling disconnect signal */
@@ -316,10 +335,11 @@ struct DBusConnection
   unsigned int disconnected_message_processed : 1; /**< We did our default handling of the disconnected message,
                                                     * such as closing the connection.
                                                     */
-  
 #ifndef DBUS_DISABLE_CHECKS
   unsigned int have_connection_lock : 1; /**< Used to check locking */
 #endif
+
+#endif /*BLUETI_ENHANCEMENT*/
   
 #ifndef DBUS_DISABLE_CHECKS
   int generation; /**< _dbus_current_generation that should correspond to this connection */
@@ -2497,11 +2517,22 @@ _dbus_connection_block_pending_call (DBusPendingCall *pending)
       else
         {          
           /* block again, we don't have the reply buffered yet. */
+#ifdef BLUETI_ENHANCEMENT /*BLUETI_ENHANCEMENT*/
           _dbus_connection_do_iteration_unlocked (connection,
                                                   NULL,
                                                   DBUS_ITERATION_DO_READING |
                                                   DBUS_ITERATION_BLOCK,
+                                                  1000); /*FIX R&D */
+
+ /*We go to sleep only for 1 second since there is an option that a diffrent thread
+     Has insert the propper respond while we are sleeping on select */
+#else /*BLUETI_ENHANCEMENT*/
+          _dbus_connection_do_iteration_unlocked (connection,
+                                                  pending,
+                                                  DBUS_ITERATION_DO_READING |
+                                                  DBUS_ITERATION_BLOCK,
                                                   timeout_milliseconds - elapsed_milliseconds);
+#endif /*BLUETI_ENHANCEMENT*/
         }
 
       goto recheck_status;

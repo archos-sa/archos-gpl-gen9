@@ -210,9 +210,9 @@ static void cmd_le_addr(int ctl, int hdev, char *opt)
 
 	dd = hci_open_dev(hdev);
 	if (dd < 0) {
-		err = errno;
+		err = -errno;
 		fprintf(stderr, "Could not open device: %s(%d)\n",
-							strerror(err), err);
+							strerror(-err), -err);
 		exit(1);
 	}
 
@@ -230,9 +230,9 @@ static void cmd_le_addr(int ctl, int hdev, char *opt)
 
 	ret = hci_send_req(dd, &rq, 1000);
 	if (status || ret < 0) {
-		err = errno;
+		err = -errno;
 		fprintf(stderr, "Can't set random address for hci%d: "
-					"%s (%d)\n", hdev, strerror(err), err);
+				"%s (%d)\n", hdev, strerror(-err), -err);
 	}
 
 	hci_close_dev(dd);
@@ -503,7 +503,7 @@ static void cmd_lm(int ctl, int hdev, char *opt)
 
 static void cmd_aclmtu(int ctl, int hdev, char *opt)
 {
-	struct hci_dev_req dr = { dev_id: hdev };
+	struct hci_dev_req dr = { .dev_id = hdev };
 	uint16_t mtu, mpkt;
 
 	if (!opt)
@@ -523,7 +523,7 @@ static void cmd_aclmtu(int ctl, int hdev, char *opt)
 
 static void cmd_scomtu(int ctl, int hdev, char *opt)
 {
-	struct hci_dev_req dr = { dev_id: hdev };
+	struct hci_dev_req dr = { .dev_id = hdev };
 	uint16_t mtu, mpkt;
 
 	if (!opt)
@@ -1305,7 +1305,7 @@ static void cmd_inq_data(int ctl, int hdev, char *opt)
 				printf("\t%s service classes:",
 					type == 0x02 ? "Shortened" : "Complete");
 				for (i = 0; i < (len - 1) / 2; i++) {
-					uint16_t val = btohs(bt_get_unaligned((uint16_t *) (ptr + (i * 2))));
+					uint16_t val = bt_get_le16((ptr + (i * 2)));
 					printf(" 0x%4.4x", val);
 				}
 				printf("\n");
@@ -1870,7 +1870,7 @@ static void print_dev_info(int ctl, struct hci_dev_info *di)
 		st->byte_tx, st->acl_tx, st->sco_tx, st->cmd_tx, st->err_tx);
 
 	if (all && !hci_test_bit(HCI_RAW, &di->flags) &&
-			bacmp(&di->bdaddr, BDADDR_ANY)) {
+			(bacmp(&di->bdaddr, BDADDR_ANY) || (di->type >> 4))) {
 		print_dev_features(di, 0);
 		print_pkt_type(di);
 		print_link_policy(di);

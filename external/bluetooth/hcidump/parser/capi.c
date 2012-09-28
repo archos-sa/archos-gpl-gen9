@@ -32,12 +32,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <sys/types.h>
-#include <netinet/in.h>
-
-#include <bluetooth/bluetooth.h>
-
-#include "parser.h"
+#include "parser/parser.h"
 
 #define CAPI_U8(frm)  (get_u8(frm))
 #define CAPI_U16(frm) (btohs(htons(get_u16(frm))))
@@ -693,7 +688,6 @@ static void cmd_disconnect_b3(int level, uint8_t subcmd, struct frame *frm)
 static void cmd_data_b3(int level, uint8_t subcmd, struct frame *frm)
 {
 	uint32_t data;
-	uint64_t data64;
 	uint16_t length, handle, flags, info;
 
 	cmd_common(level, 0x00, frm);
@@ -724,7 +718,7 @@ static void cmd_data_b3(int level, uint8_t subcmd, struct frame *frm)
 		printf("Flags: 0x%04x\n", flags);
 
 		if (data == 0)
-			data64 = get_u64(frm);
+			(void) get_u64(frm);
 
 		raw_dump(level, frm);
 	}

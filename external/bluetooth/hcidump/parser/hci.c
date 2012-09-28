@@ -33,15 +33,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/hci.h>
-#include <bluetooth/hci_lib.h>
-
-#include "parser.h"
+#include "parser/parser.h"
+#include "lib/hci.h"
+#include "lib/hci_lib.h"
 
 static uint16_t manufacturer = DEFAULT_COMPID;
 
@@ -50,7 +44,7 @@ static inline uint16_t get_manufacturer(void)
 	return (manufacturer == DEFAULT_COMPID ? parser.defcompid : manufacturer);
 }
 
-#define EVENT_NUM 76
+#define EVENT_NUM 77
 static char *event_str[EVENT_NUM + 1] = {
 	"Unknown",
 	"Inquiry Complete",
@@ -115,6 +109,7 @@ static char *event_str[EVENT_NUM + 1] = {
 	"Keypress Notification",
 	"Remote Host Supported Features Notification",
 	"LE Meta Event",
+	"Unknown",
 	"Physical Link Complete",
 	"Channel Selected",
 	"Disconnection Physical Link Complete",
@@ -417,7 +412,7 @@ static char *cmd_le_str[CMD_LE_NUM + 1] = {
 	"LE Test End",
 };
 
-#define ERROR_CODE_NUM 56
+#define ERROR_CODE_NUM 63
 static char *error_code_str[ERROR_CODE_NUM + 1] = {
 	"Success",
 	"Unknown HCI Command",
@@ -476,6 +471,13 @@ static char *error_code_str[ERROR_CODE_NUM + 1] = {
 	"Extended Inquiry Response Too Large",
 	"Simple Pairing Not Supported by Host",
 	"Host Busy - Pairing",
+	"Connection Rejected due to No Suitable Channel Found",
+	"Controller Busy",
+	"Unacceptable Connection Interval",
+	"Directed Advertising Timeout",
+	"Connection Terminated Due to MIC Failure",
+	"Connection Failed to be Established",
+	"MAC Connection Failed",
 };
 
 static char *status2str(uint8_t status)
@@ -1122,12 +1124,11 @@ static inline void create_physical_link_dump(int level, struct frame *frm)
 	int i;
 
 	p_indent(level, frm);
-
 	printf("handle %d key length %d key type %d\n",
 		cp->handle, cp->key_length, cp->key_type);
+	p_indent(level, frm);
 	printf("key ");
-
-	for (i = 0; i < cp->key_length && cp->key_length < 32; i++)
+	for (i = 0; i < cp->key_length && cp->key_length <= 32; i++)
 		printf("%2.2x", cp->key[i]);
 	printf("\n");
 }
@@ -1138,26 +1139,19 @@ static inline void create_logical_link_dump(int level, struct frame *frm)
 	int i;
 
 	p_indent(level, frm);
-
 	printf("handle %d\n", cp->handle);
+
+	p_indent(level, frm);
 	printf("tx_flow ");
 	for (i = 0; i < 16; i++)
 		printf("%2.2x", cp->tx_flow[i]);
-	printf("\nrx_flow ");
+	printf("\n");
+
+	p_indent(level, frm);
+	printf("rx_flow ");
 	for (i = 0; i < 16; i++)
 		printf("%2.2x", cp->rx_flow[i]);
 	printf("\n");
-}
-
-static inline void accept_sync_conn_req_dump(int level, struct frame *frm)
-{
-	accept_sync_conn_req_cp *cp = frm->ptr;
-	char addr[18];
-
-	p_indent(level, frm);
-	p_ba2str(&cp->bdaddr, addr);
-	printf("bdaddr %s voice_setting 0x%4.4x pkt_type 0x%4.4x\n",
-		addr, btohs(cp->voice_setting), btohs(cp->pkt_type));
 }
 
 static inline void hold_mode_dump(int level, struct frame *frm)
@@ -1714,10 +1708,8 @@ static inline void command_dump(int level, struct frame *frm)
 			return;
 		case OCF_CREATE_CONN_CANCEL:
 		case OCF_REMOTE_NAME_REQ_CANCEL:
-			bdaddr_command_dump(level + 1, frm);
-			return;
 		case OCF_ACCEPT_SYNC_CONN_REQ:
-			accept_sync_conn_req_dump(level + 1, frm);
+			bdaddr_command_dump(level + 1, frm);
 			return;
 		case OCF_ADD_SCO:
 		case OCF_SET_CONN_PTYPE:
@@ -2610,12 +2602,14 @@ static inline void read_local_amp_assoc_dump(int level, struct frame *frm)
 	int i;
 
 	p_indent(level, frm);
-	printf("status 0x%2.2x handle 0x%2.2x length %d\n",
+	printf("status 0x%2.2x handle 0x%2.2x remaining len %d\n",
 			rp->status, rp->handle, len);
 	if (rp->status > 0) {
 		p_indent(level, frm);
 		printf("Error: %s\n", status2str(rp->status));
 	} else {
+		p_indent(level, frm);
+		printf("assoc data");
 		for (i = 0; i < len; i++) {
 			if (!(i % 16)) {
 				printf("\n");
@@ -3526,11 +3520,16 @@ static inline void remote_host_features_notify_dump(int level, struct frame *frm
 static inline void evt_le_conn_complete_dump(int level, struct frame *frm)
 {
 	evt_le_connection_complete *evt = frm->ptr;
+	char addr[18];
 
 	p_indent(level, frm);
 	printf("status 0x%2.2x handle %d, role %s\n",
 					evt->status, btohs(evt->handle),
 					evt->role ? "slave" : "master");
+
+	p_indent(level, frm);
+	p_ba2str(&evt->peer_bdaddr, addr);
+	printf("bdaddr %s (%s)\n", addr, bdaddrtype2str(evt->peer_bdaddr_type));
 }
 
 static inline void evt_le_advertising_report_dump(int level, struct frame *frm)
@@ -3541,6 +3540,7 @@ static inline void evt_le_advertising_report_dump(int level, struct frame *frm)
 	while (num_reports--) {
 		char addr[18];
 		le_advertising_info *info = frm->ptr;
+		int offset = 0;
 
 		p_ba2str(&info->bdaddr, addr);
 
@@ -3551,9 +3551,12 @@ static inline void evt_le_advertising_report_dump(int level, struct frame *frm)
 		printf("bdaddr %s (%s)\n", addr,
 					bdaddrtype2str(info->bdaddr_type));
 
-		if (info->length > 0) {
-			ext_inquiry_data_dump(level, frm,
-					((uint8_t *) &info->length) + 1);
+		while (offset < info->length) {
+			int eir_data_len = info->data[offset];
+
+			ext_inquiry_data_dump(level, frm, &info->data[offset]);
+
+			offset += eir_data_len + 1;
 		}
 
 		frm->ptr += LE_ADVERTISING_INFO_SIZE + info->length;
@@ -3971,8 +3974,11 @@ static inline void sco_dump(int level, struct frame *frm)
 	uint8_t flags = acl_flags(handle);
 	int len;
 
-	if (frm->audio_fd > fileno(stderr))
+	if (frm->audio_fd > fileno(stderr)) {
 		len = write(frm->audio_fd, frm->ptr + HCI_SCO_HDR_SIZE, hdr->dlen);
+		if (len < 0)
+			return;
+	}
 
 	if (!p_filter(FILT_SCO)) {
 		p_indent(level, frm);

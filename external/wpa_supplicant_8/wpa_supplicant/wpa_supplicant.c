@@ -49,6 +49,7 @@
 #include "bgscan.h"
 #include "bss.h"
 #include "scan.h"
+#include "wfd/wfd_i.h"
 
 const char *wpa_supplicant_version =
 "wpa_supplicant v" VERSION_STR "\n"
@@ -378,6 +379,22 @@ void wpa_supplicant_set_non_wpa_policy(struct wpa_supplicant *wpa_s,
 }
 
 
+static void free_hw_features(struct wpa_supplicant *wpa_s)
+{
+	int i;
+	if (wpa_s->hw.modes == NULL)
+		return;
+
+	for (i = 0; i < wpa_s->hw.num_modes; i++) {
+		os_free(wpa_s->hw.modes[i].channels);
+		os_free(wpa_s->hw.modes[i].rates);
+	}
+
+	os_free(wpa_s->hw.modes);
+	wpa_s->hw.modes = NULL;
+}
+
+
 static void wpa_supplicant_cleanup(struct wpa_supplicant *wpa_s)
 {
 	bgscan_deinit(wpa_s);
@@ -449,8 +466,13 @@ static void wpa_supplicant_cleanup(struct wpa_supplicant *wpa_s)
 	wpas_p2p_deinit(wpa_s);
 #endif /* CONFIG_P2P */
 
+#ifdef CONFIG_WFD
+	wfd_deinit(wpa_s);
+#endif /* CONFIG_WFD */
 	os_free(wpa_s->next_scan_freqs);
 	wpa_s->next_scan_freqs = NULL;
+
+	free_hw_features(wpa_s);
 }
 
 
@@ -535,7 +557,7 @@ const char * wpa_supplicant_state_txt(enum wpa_states state)
 
 #ifdef CONFIG_BGSCAN
 
-static void wpa_supplicant_start_bgscan(struct wpa_supplicant *wpa_s)
+void wpa_supplicant_start_bgscan(struct wpa_supplicant *wpa_s)
 {
 	if (wpa_s->current_ssid == wpa_s->bgscan_ssid)
 		return;
@@ -557,7 +579,7 @@ static void wpa_supplicant_start_bgscan(struct wpa_supplicant *wpa_s)
 }
 
 
-static void wpa_supplicant_stop_bgscan(struct wpa_supplicant *wpa_s)
+void wpa_supplicant_stop_bgscan(struct wpa_supplicant *wpa_s)
 {
 	if (wpa_s->bgscan_ssid != NULL) {
 		bgscan_deinit(wpa_s);
@@ -567,6 +589,23 @@ static void wpa_supplicant_stop_bgscan(struct wpa_supplicant *wpa_s)
 
 #endif /* CONFIG_BGSCAN */
 
+void wpa_supplicant_enable_roaming(struct wpa_supplicant *wpa_s)
+{
+#ifdef CONFIG_BGSCAN
+	if (wpa_s->roaming_disabled &&
+	    wpa_s->wpa_state == WPA_COMPLETED)
+		wpa_supplicant_start_bgscan(wpa_s);
+#endif /* CONFIG_BGSCAN */
+	wpa_s->roaming_disabled = 0;
+}
+
+void wpa_supplicant_disable_roaming(struct wpa_supplicant *wpa_s)
+{
+	wpa_s->roaming_disabled = 1;
+#ifdef CONFIG_BGSCAN
+	wpa_supplicant_stop_bgscan(wpa_s);
+#endif /* CONFIG_BGSCAN */
+}
 
 /**
  * wpa_supplicant_set_state - Set current connection state
@@ -608,6 +647,9 @@ void wpa_supplicant_set_state(struct wpa_supplicant *wpa_s,
 #ifdef CONFIG_P2P
 		wpas_p2p_completed(wpa_s);
 #endif /* CONFIG_P2P */
+#ifdef CONFIG_WFD
+		wfd_connection_completed(wpa_s);
+#endif /* CONFIG_WFD */
 	} else if (state == WPA_DISCONNECTED || state == WPA_ASSOCIATING ||
 		   state == WPA_ASSOCIATED) {
 		wpa_s->new_connection = 1;
@@ -619,11 +661,14 @@ void wpa_supplicant_set_state(struct wpa_supplicant *wpa_s,
 	wpa_s->wpa_state = state;
 
 #ifdef CONFIG_BGSCAN
-	if (state == WPA_COMPLETED)
+	if (state == WPA_COMPLETED && !wpa_s->roaming_disabled)
 		wpa_supplicant_start_bgscan(wpa_s);
 	else
 		wpa_supplicant_stop_bgscan(wpa_s);
 #endif /* CONFIG_BGSCAN */
+
+	if (state == WPA_COMPLETED || state == WPA_DISCONNECTED)
+		wpa_supplicant_clear_roaming(wpa_s, 0);
 
 	if (wpa_s->wpa_state != old_state) {
 		wpas_notify_state_changed(wpa_s, wpa_s->wpa_state, old_state);
@@ -1188,6 +1233,7 @@ void wpa_supplicant_associate(struct wpa_supplicant *wpa_s,
 
 	os_memset(&params, 0, sizeof(params));
 	wpa_s->reassociate = 0;
+	wpa_s->roaming = 0;
 	if (bss) {
 #ifdef CONFIG_IEEE80211R
 		const u8 *ie, *md = NULL;
@@ -1349,6 +1395,18 @@ void wpa_supplicant_associate(struct wpa_supplicant *wpa_s,
 		}
 	}
 #endif /* CONFIG_P2P */
+#ifdef CONFIG_WFD
+	if (wpa_s->global->wfd) {
+		u8 *pos;
+		size_t len;
+		int res;
+		pos = wpa_ie + wpa_ie_len;
+		len = sizeof(wpa_ie) - wpa_ie_len;
+		res = wfd_build_assoc_req_ie(wpa_s->global->wfd, len, pos);
+		if (res >= 0)
+			wpa_ie_len += res;
+	}
+#endif /* CONFIG_WFD */
 
 	wpa_clear_keys(wpa_s, bss ? bss->bssid : NULL);
 	use_crypt = 1;
@@ -1541,6 +1599,9 @@ static void wpa_supplicant_clear_connection(struct wpa_supplicant *wpa_s,
 	old_ssid = wpa_s->current_ssid;
 	wpa_s->current_ssid = NULL;
 	wpa_s->current_bss = NULL;
+#ifdef CONFIG_WFD
+	wfd_clear_connection(wpa_s);
+#endif /* CONFIG_WFD */
 	wpa_sm_set_config(wpa_s->wpa, NULL);
 #ifdef CONFIG_WAPI
 	wapi_sm_set_config(wpa_s->wapi, NULL);
@@ -2195,13 +2256,10 @@ int wpa_supplicant_driver_init(struct wpa_supplicant *wpa_s)
 	wpa_drv_flush_pmkid(wpa_s);
 
 	wpa_s->prev_scan_ssid = WILDCARD_SSID_SCAN;
+	wpa_s->prev_scan_wildcard = 0;
+
 	if (wpa_supplicant_enabled_networks(wpa_s->conf)) {
-		int ret;
-		ret = wpa_supplicant_delayed_sched_scan(wpa_s,
-							interface_count,
-							100000);
-		if (ret)
-			wpa_supplicant_req_scan(wpa_s, interface_count, 100000);
+		wpa_supplicant_req_scan(wpa_s, interface_count, 100000);
 		interface_count++;
 	} else
 		wpa_supplicant_set_state(wpa_s, WPA_INACTIVE);
@@ -2225,7 +2283,7 @@ static struct wpa_supplicant * wpa_supplicant_alloc(void)
 	if (wpa_s == NULL)
 		return NULL;
 	wpa_s->scan_req = 1;
-	wpa_s->scan_interval = 5;
+	wpa_s->scan_interval = 15;
 	wpa_s->sched_scan_interval = 3;
 	wpa_s->new_connection = 1;
 	wpa_s->parent = wpa_s;
@@ -2393,6 +2451,10 @@ next_driver:
 		return -1;
 	}
 
+	wpa_s->hw.modes = wpa_drv_get_hw_feature_data(wpa_s,
+						      &wpa_s->hw.num_modes,
+						      &wpa_s->hw.flags);
+
 	if (wpa_drv_get_capa(wpa_s, &capa) == 0) {
 		wpa_s->drv_flags = capa.flags;
 		if (capa.flags & WPA_DRIVER_FLAGS_USER_SPACE_MLME) {
@@ -2402,6 +2464,8 @@ next_driver:
 		wpa_s->max_scan_ssids = capa.max_scan_ssids;
 		wpa_s->max_sched_scan_ssids = capa.max_sched_scan_ssids;
 		wpa_s->sched_scan_supported = capa.sched_scan_supported;
+		wpa_s->sched_scan_intervals_supported =
+			capa.sched_scan_intervals_supported;
 		wpa_s->max_match_sets = capa.max_match_sets;
 		wpa_s->max_remain_on_chan = capa.max_remain_on_chan;
 		wpa_s->max_stations = capa.max_stations;
@@ -2445,12 +2509,22 @@ next_driver:
 			   wpa_s->conf->ctrl_interface);
 		return -1;
 	}
+#ifdef CONFIG_WFD
+	if (wfd_init(wpa_s->global, wpa_s) < 0) {
+		wpa_msg(wpa_s, MSG_ERROR, "Failed to init WFD");
+		return -1;
+	}
+#endif /* CONFIG_WFD */
 
 #ifdef CONFIG_P2P
 	if (wpas_p2p_init(wpa_s->global, wpa_s) < 0) {
 		wpa_msg(wpa_s, MSG_ERROR, "Failed to init P2P");
 		return -1;
 	}
+#ifdef CONFIG_WFD
+	wpas_p2p_register_wfd(wpa_s->global);
+#endif /* CONFIG_WFD */
+
 #endif /* CONFIG_P2P */
 
 	if (wpa_bss_init(wpa_s) < 0)
@@ -2701,6 +2775,7 @@ struct wpa_global * wpa_supplicant_init(struct wpa_params *params)
 		return NULL;
 	dl_list_init(&global->p2p_srv_bonjour);
 	dl_list_init(&global->p2p_srv_upnp);
+	dl_list_init(&global->p2p_srv_wfd);
 	global->params.daemonize = params->daemonize;
 	global->params.wait_for_monitor = params->wait_for_monitor;
 	global->params.dbus_ctrl_interface = params->dbus_ctrl_interface;
@@ -2882,23 +2957,6 @@ void wpa_supplicant_update_config(struct wpa_supplicant *wpa_s)
 #endif /* CONFIG_P2P */
 
 	wpa_s->conf->changed_parameters = 0;
-}
-
-
-void ieee80211_sta_free_hw_features(struct hostapd_hw_modes *hw_features,
-				    size_t num_hw_features)
-{
-	size_t i;
-
-	if (hw_features == NULL)
-		return;
-
-	for (i = 0; i < num_hw_features; i++) {
-		os_free(hw_features[i].channels);
-		os_free(hw_features[i].rates);
-	}
-
-	os_free(hw_features);
 }
 
 

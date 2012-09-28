@@ -88,6 +88,13 @@ extern "C" {
 /* BNEP headers */
 #define BNEP_TYPE_MASK	 0x7f
 #define BNEP_EXT_HEADER	 0x80
+#define BNEP_EXT_CONTROL 0x00
+
+struct bnep_ctrl_req {
+	uint8_t  type;
+	uint8_t  ctrl;
+	uint8_t  data[0];
+} __attribute__((packed));
 
 struct bnep_setup_conn_req {
 	uint8_t  type;

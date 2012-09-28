@@ -104,7 +104,7 @@ static int uses_rfcomm(char *path, char *dev)
 
 	while ((de = readdir(dir)) != NULL) {
 		char link[PATH_MAX + 1];
-		int  len = readlink(de->d_name, link, sizeof(link));
+		int  len = readlink(de->d_name, link, PATH_MAX);
 		if (len > 0) {
 			link[len] = 0;
 			if (strstr(link, dev)) {
@@ -191,8 +191,8 @@ static int dun_create_tty(int sk, char *tty, int size)
 	int id, try = 30;
 
 	struct rfcomm_dev_req req = {
-		flags:   (1 << RFCOMM_REUSE_DLC) | (1 << RFCOMM_RELEASE_ONHUP),
-		dev_id:  -1
+		.flags = (1 << RFCOMM_REUSE_DLC) | (1 << RFCOMM_RELEASE_ONHUP),
+		.dev_id = -1
 	};
 
 	alen = sizeof(sa);

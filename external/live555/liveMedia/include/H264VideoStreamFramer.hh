@@ -65,6 +65,7 @@ private:
   unsigned fLastSeenPPSSize;
   struct timeval fNextPresentationTime; // the presentation time to be used for the next NAL unit to be parsed/delivered after this
   friend class H264VideoStreamParser; // hack
+  void updatePresentationTime(struct timeval);
 };
 
 #endif

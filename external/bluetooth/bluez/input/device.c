@@ -43,7 +43,6 @@
 #include <gdbus.h>
 
 #include "log.h"
-#include "textfile.h"
 #include "uinput.h"
 
 #include "../src/adapter.h"
@@ -69,7 +68,6 @@ struct input_conn {
 	struct fake_input	*fake;
 	DBusMessage		*pending_connect;
 	char			*uuid;
-	char			*alias;
 	GIOChannel		*ctrl_io;
 	GIOChannel		*intr_io;
 	guint			ctrl_watch;
@@ -111,9 +109,6 @@ static struct input_conn *find_connection(GSList *list, const char *pattern)
 
 		if (!strcasecmp(iconn->uuid, pattern))
 			return iconn;
-
-		if (!strcasecmp(iconn->alias, pattern))
-			return iconn;
 	}
 
 	return NULL;
@@ -137,7 +132,6 @@ static void input_conn_free(struct input_conn *iconn)
 		g_io_channel_unref(iconn->ctrl_io);
 
 	g_free(iconn->uuid);
-	g_free(iconn->alias);
 	g_free(iconn->fake);
 	g_free(iconn);
 }
@@ -165,10 +159,10 @@ static int uinput_create(char *name)
 		if (fd < 0) {
 			fd = open("/dev/misc/uinput", O_RDWR);
 			if (fd < 0) {
-				err = errno;
+				err = -errno;
 				error("Can't open input device: %s (%d)",
-							strerror(err), err);
-				return -err;
+							strerror(-err), -err);
+				return err;
 			}
 		}
 	}
@@ -183,12 +177,11 @@ static int uinput_create(char *name)
 	dev.id.version = 0x0000;
 
 	if (write(fd, &dev, sizeof(dev)) < 0) {
-		err = errno;
+		err = -errno;
 		error("Can't write device information: %s (%d)",
-						strerror(err), err);
+						strerror(-err), -err);
 		close(fd);
-		errno = err;
-		return -err;
+		return err;
 	}
 
 	ioctl(fd, UI_SET_EVBIT, EV_KEY);
@@ -201,12 +194,11 @@ static int uinput_create(char *name)
 	ioctl(fd, UI_SET_KEYBIT, KEY_PAGEDOWN);
 
 	if (ioctl(fd, UI_DEV_CREATE, NULL) < 0) {
-		err = errno;
+		err = -errno;
 		error("Can't create uinput device: %s (%d)",
-						strerror(err), err);
+						strerror(-err), -err);
 		close(fd);
-		errno = err;
-		return -err;
+		return err;
 	}
 
 	return fd;
@@ -334,9 +326,11 @@ static void rfcomm_connect_cb(GIOChannel *chan, GError *err, gpointer user_data)
 	 */
 	fake->uinput = uinput_create(idev->name);
 	if (fake->uinput < 0) {
+		int err = fake->uinput;
+
 		g_io_channel_shutdown(chan, TRUE, NULL);
 		reply = btd_error_failed(iconn->pending_connect,
-							strerror(errno));
+							strerror(-err));
 		goto failed;
 	}
 
@@ -370,6 +364,7 @@ static gboolean rfcomm_connect(struct input_conn *iconn, GError **err)
 				BT_IO_OPT_SOURCE_BDADDR, &idev->src,
 				BT_IO_OPT_DEST_BDADDR, &idev->dst,
 				BT_IO_OPT_POWER_ACTIVE, 0,
+				BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_MEDIUM,
 				BT_IO_OPT_INVALID);
 	if (!io)
 		return FALSE;
@@ -536,11 +531,11 @@ static int ioctl_connadd(struct hidp_connadd_req *req)
 		return -errno;
 
 	if (ioctl(ctl, HIDPCONNADD, req) < 0)
-		err = errno;
+		err = -errno;
 
 	close(ctl);
 
-	return -err;
+	return err;
 }
 
 static void encrypt_completed(uint8_t status, gpointer user_data)
@@ -598,8 +593,9 @@ static int hidp_add_connection(const struct input_device *idev,
 	extract_hid_record(rec, req);
 	sdp_record_free(rec);
 
-	read_device_id(src_addr, dst_addr, NULL,
-				&req->vendor, &req->product, &req->version);
+	req->vendor = btd_device_get_vendor(idev->device);
+	req->product = btd_device_get_product(idev->device);
+	req->version = btd_device_get_version(idev->device);
 
 	fake_hid = get_fake_hid(req->vendor, req->product);
 	if (fake_hid) {
@@ -681,7 +677,7 @@ static int connection_disconnect(struct input_conn *iconn, uint32_t flags)
 	struct fake_input *fake = iconn->fake;
 	struct hidp_conndel_req req;
 	struct hidp_conninfo ci;
-	int ctl, err;
+	int ctl, err = 0;
 
 	/* Fake input disconnect */
 	if (fake) {
@@ -707,7 +703,7 @@ static int connection_disconnect(struct input_conn *iconn, uint32_t flags)
 	bacpy(&ci.bdaddr, &idev->dst);
 	if ((ioctl(ctl, HIDPGETCONNINFO, &ci) < 0) ||
 				(ci.state != BT_CONNECTED)) {
-		errno = ENOTCONN;
+		err = -ENOTCONN;
 		goto fail;
 	}
 
@@ -715,21 +711,16 @@ static int connection_disconnect(struct input_conn *iconn, uint32_t flags)
 	bacpy(&req.bdaddr, &idev->dst);
 	req.flags = flags;
 	if (ioctl(ctl, HIDPCONNDEL, &req) < 0) {
+		err = -errno;
 		error("Can't delete the HID device: %s(%d)",
-				strerror(errno), errno);
+				strerror(-err), -err);
 		goto fail;
 	}
 
-	close(ctl);
-
-	return 0;
-
 fail:
-	err = errno;
 	close(ctl);
-	errno = err;
 
-	return -err;
+	return err;
 }
 
 static int disconnect(struct input_device *idev, uint32_t flags)
@@ -826,6 +817,9 @@ failed:
 	reply = btd_error_failed(iconn->pending_connect, err_msg);
 	g_dbus_send_message(idev->conn, reply);
 
+	dbus_message_unref(iconn->pending_connect);
+	iconn->pending_connect = NULL;
+
 	/* So we guarantee the interrupt channel is closed before the
 	 * control channel (if we only do unref GLib will close it only
 	 * after returning control to the mainloop */
@@ -918,7 +912,7 @@ static DBusMessage *input_device_connect(DBusConnection *conn,
 	DBusMessage *reply;
 	GError *err = NULL;
 
-	iconn = find_connection(idev->connections, "HID");
+	iconn = find_connection(idev->connections, HID_UUID);
 	if (!iconn)
 		return btd_error_not_supported(msg);
 
@@ -968,6 +962,19 @@ static DBusMessage *input_device_disconnect(DBusConnection *conn,
 	int err;
 
 	err = disconnect(idev, 0);
+	if (err < 0)
+		return btd_error_failed(msg, strerror(-err));
+
+	return g_dbus_create_reply(msg, DBUS_TYPE_INVALID);
+}
+
+static DBusMessage *input_device_unplug(DBusConnection *conn,
+						DBusMessage *msg, void *data)
+{
+	struct input_device *idev = data;
+	int err;
+
+	err = disconnect(idev, 1 << HIDP_VIRTUAL_CABLE_UNPLUG);
 	if (err < 0)
 		return btd_error_failed(msg, strerror(-err));
 
@@ -1027,6 +1034,7 @@ static GDBusMethodTable device_methods[] = {
 						G_DBUS_METHOD_FLAG_ASYNC },
 	{ "Disconnect",		"",	"",	input_device_disconnect	},
 	{ "GetProperties",	"",	"a{sv}",input_device_get_properties },
+	{ "Unplug",		"",	"",	input_device_unplug	},
 	{ }
 };
 
@@ -1036,23 +1044,23 @@ static GDBusSignalTable device_signals[] = {
 };
 
 static struct input_device *input_device_new(DBusConnection *conn,
-					struct btd_device *device, const char *path,
-					const bdaddr_t *src, const bdaddr_t *dst,
-					const uint32_t handle)
+				struct btd_device *device, const char *path,
+				const uint32_t handle)
 {
+	struct btd_adapter *adapter = device_get_adapter(device);
 	struct input_device *idev;
 	char name[249], src_addr[18], dst_addr[18];
 
 	idev = g_new0(struct input_device, 1);
-	bacpy(&idev->src, src);
-	bacpy(&idev->dst, dst);
+	adapter_get_address(adapter, &idev->src);
+	device_get_address(device, &idev->dst, NULL);
 	idev->device = btd_device_ref(device);
 	idev->path = g_strdup(path);
 	idev->conn = dbus_connection_ref(conn);
 	idev->handle = handle;
 
-	ba2str(src, src_addr);
-	ba2str(dst, dst_addr);
+	ba2str(&idev->src, src_addr);
+	ba2str(&idev->dst, dst_addr);
 	if (read_device_name(src_addr, dst_addr, name) == 0)
 		idev->name = g_strdup(name);
 
@@ -1072,37 +1080,34 @@ static struct input_device *input_device_new(DBusConnection *conn,
 }
 
 static struct input_conn *input_conn_new(struct input_device *idev,
-					const char *uuid, const char *alias,
-					int timeout)
+					const char *uuid, int timeout)
 {
 	struct input_conn *iconn;
 
 	iconn = g_new0(struct input_conn, 1);
 	iconn->timeout = timeout;
 	iconn->uuid = g_strdup(uuid);
-	iconn->alias = g_strdup(alias);
 	iconn->idev = idev;
 
 	return iconn;
 }
 
 int input_device_register(DBusConnection *conn, struct btd_device *device,
-			const char *path, const bdaddr_t *src,
-			const bdaddr_t *dst, const char *uuid,
-			uint32_t handle, int timeout)
+					const char *path, const char *uuid,
+					uint32_t handle, int timeout)
 {
 	struct input_device *idev;
 	struct input_conn *iconn;
 
 	idev = find_device_by_path(devices, path);
 	if (!idev) {
-		idev = input_device_new(conn, device, path, src, dst, handle);
+		idev = input_device_new(conn, device, path, handle);
 		if (!idev)
 			return -EINVAL;
 		devices = g_slist_append(devices, idev);
 	}
 
-	iconn = input_conn_new(idev, uuid, "hid", timeout);
+	iconn = input_conn_new(idev, uuid, timeout);
 	if (!iconn)
 		return -EINVAL;
 
@@ -1112,21 +1117,20 @@ int input_device_register(DBusConnection *conn, struct btd_device *device,
 }
 
 int fake_input_register(DBusConnection *conn, struct btd_device *device,
-			const char *path, bdaddr_t *src, bdaddr_t *dst,
-			const char *uuid, uint8_t channel)
+			const char *path, const char *uuid, uint8_t channel)
 {
 	struct input_device *idev;
 	struct input_conn *iconn;
 
 	idev = find_device_by_path(devices, path);
 	if (!idev) {
-		idev = input_device_new(conn, device, path, src, dst, 0);
+		idev = input_device_new(conn, device, path, 0);
 		if (!idev)
 			return -EINVAL;
 		devices = g_slist_append(devices, idev);
 	}
 
-	iconn = input_conn_new(idev, uuid, "hsp", 0);
+	iconn = input_conn_new(idev, uuid, 0);
 	if (!iconn)
 		return -EINVAL;
 
@@ -1218,7 +1222,7 @@ int input_device_set_channel(const bdaddr_t *src, const bdaddr_t *dst, int psm,
 	if (!idev)
 		return -ENOENT;
 
-	iconn = find_connection(idev->connections, "hid");
+	iconn = find_connection(idev->connections, HID_UUID);
 	if (!iconn)
 		return -ENOENT;
 
@@ -1249,7 +1253,7 @@ int input_device_close_channels(const bdaddr_t *src, const bdaddr_t *dst)
 	if (!idev)
 		return -ENOENT;
 
-	iconn = find_connection(idev->connections, "hid");
+	iconn = find_connection(idev->connections, HID_UUID);
 	if (!iconn)
 		return -ENOENT;
 

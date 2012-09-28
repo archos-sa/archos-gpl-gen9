@@ -1,4 +1,6 @@
 BUILD_PAND := true
+TIBLUEZVER := $(shell cat $(LOCAL_PATH)/../ti_bluez_version;)
+
 ifeq ($(BUILD_PAND),true)
 
 LOCAL_PATH:= $(call my-dir)
@@ -13,7 +15,7 @@ LOCAL_SRC_FILES:= \
 	pand.c bnep.c sdp.c
 
 LOCAL_CFLAGS:= \
-	-DVERSION=\"4.93\" -DSTORAGEDIR=\"/data/misc/bluetoothd\" -DNEED_PPOLL -D__ANDROID__
+	-DVERSION=\"$(TIBLUEZVER)\" -DSTORAGEDIR=\"/data/misc/bluetoothd\" -DNEED_PPOLL -D__ANDROID__
 
 LOCAL_C_INCLUDES:=\
 	$(LOCAL_PATH)/../lib \

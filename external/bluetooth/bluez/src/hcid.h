@@ -29,6 +29,7 @@ struct main_opts {
 	char		*name;
 	uint32_t	class;
 	uint16_t	pageto;
+	uint16_t	autoto;
 	uint32_t	discovto;
 	uint32_t	pairto;
 	uint16_t	link_mode;
@@ -37,19 +38,19 @@ struct main_opts {
 	gboolean	reverse_sdp;
 	gboolean	name_resolv;
 	gboolean	debug_keys;
-	gboolean	attrib_server;
-	gboolean	le;
+	gboolean	gatt_enabled;
+	gboolean	wide_band_speech;
 
 	uint8_t		mode;
 	uint8_t		discov_interval;
 	char		deviceid[15]; /* FIXME: */
+	uint32_t	le_reconnect_timeout;
+	uint16_t	le_bk_scan_interval;
+	uint16_t	le_bk_scan_window;
 };
 
 enum {
-	HCID_SET_NAME,
-	HCID_SET_CLASS,
 	HCID_SET_PAGETO,
-	HCID_SET_DISCOVTO,
 };
 
 extern struct main_opts main_opts;
