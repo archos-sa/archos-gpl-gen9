@@ -1,7 +1,7 @@
-1) If you have this from gitorious, you also need to get the kernel
+1) If you have this from github, you also need to get the kernel
    and place it into a folder named "linux-ics":
 
-       git clone git://gitorious.org/archos/archos-gpl-gen9-kernel-ics.git linux-ics
+       git clone git://github.org/archos-sa/archos-gpl-gen9-kernel-ics.git linux-ics
 
    starting from 4.0.24, the kernel is 3.0.21 and in a separate branch:
    
